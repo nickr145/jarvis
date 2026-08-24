@@ -1,0 +1,18 @@
+# secrets
+.env
+*.key
+credentials.json
+token.json
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# generated output (keep the folder, not its contents)
+output/*
+!output/.gitkeep
+
+# os cruft
+.DS_Store

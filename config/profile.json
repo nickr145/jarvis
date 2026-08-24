@@ -1,0 +1,7 @@
+{
+  "news_categories": ["world", "financial", "tech", "sports"],
+  "job_keywords": ["product manager", "AI", "remote"],
+  "linkedin_topics": ["AI tooling", "career growth"],
+  "linkedin_cadence_days": 3,
+  "briefing_time": "07:30"
+}

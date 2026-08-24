@@ -1,0 +1,8 @@
+python-dotenv
+requests
+anthropic
+
+# add as each agent needs them, e.g.:
+# google-api-python-client   # gmail agent
+# google-auth-httplib2
+# google-auth-oauthlib
