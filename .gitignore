@@ -16,3 +16,6 @@ output/*
 
 # os cruft
 .DS_Store
+
+# claude — track settings.json and skills/, ignore per-machine local settings
+.claude/settings.local.json
