@@ -1,8 +1,8 @@
-python-dotenv
-requests
-anthropic
-
-# add as each agent needs them, e.g.:
-# google-api-python-client   # gmail agent
-# google-auth-httplib2
-# google-auth-oauthlib
+# No third-party dependencies.
+#
+# news_agent.py is stdlib only (urllib, ElementTree, email.utils).
+# The email + LinkedIn agents run as Claude Code subagents over MCP, so they
+# need no Python packages and no API key. The portal is stdlib http.server.
+#
+# `anthropic` and `python-dotenv` were dropped when the news agent stopped
+# making an LLM call; `requests` was never used.

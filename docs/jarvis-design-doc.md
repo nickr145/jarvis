@@ -105,17 +105,29 @@ real data access. The only browser command here is opening the portal itself.
 
 ### News Agent — `agents/news_agent.py`
 - **Input:** categories from `config/profile.json`
-- **Tooling:** Google News RSS (keyless, free, no account)
+- **Tooling:** Google News RSS (keyless, free, no account). Categories not in
+  the topic map fall back to a keyword search feed, so `"artificial
+  intelligence"` works as a category without any code change.
 - **Budget:** top 3 items per category
-- **Output (JSON):**
+- **No LLM call.** The feed carries a headline, a publisher and a link, and no
+  article text. A model given only a headline and told not to invent specifics
+  can only restate it at greater length — padding that reads as analysis. By
+  the honesty rule, that's the same failure as a fabricated panel, smaller.
+  Real summaries would require fetching and scraping the articles themselves.
+- **Output** — `output/YYYY-MM-DD/news.json`:
 ```json
 {
-  "category": "world | financial | sports | tech",
-  "items": [
-    {"headline": "...", "summary": "1-2 sentences", "source": "...", "url": "..."}
+  "generated_at": "ISO-8601 with offset",
+  "categories": [
+    {"category": "world | financial | sports | tech",
+     "items": [{"headline": "...", "source": "...", "source_url": "...",
+                "url": "...", "published": "ISO-8601 with offset"}],
+     "error": "present only on failure"}
   ]
 }
 ```
+`published` is offset-aware (the feed reports GMT) — the portal must convert
+to local time, not truncate the string.
 
 ### Email Agent — subagent definition + `config/email_rules.md`
 - **Input:** Gmail inbox, read-only
@@ -179,27 +191,19 @@ step 7. (Still present in the current file; remove it when touching it next.)
 kept as prose so it's editable without touching agent wiring.
 
 ### Dependencies
-`requirements.txt`:
-```
-python-dotenv
-anthropic>=0.117,<1.0
-feedparser
-```
-- `anthropic` is **pinned below 1.0**. A 1.x exists with breaking changes
-  (httpx2, removed parameters); unpinned, the next `pip install -U` silently
-  breaks the news agent.
-- `feedparser` replaces hand-rolled `ElementTree` parsing. The current
-  `title.rpartition(" - ")` trick to split headline from source mangles any
-  headline containing " - ".
-- Nothing for the portal — stdlib `http.server` and `webbrowser`.
+`requirements.txt` is **empty**. Nothing here needs a third-party package:
+
+- News agent — stdlib `urllib` + `ElementTree`. `feedparser` turned out to be
+  unnecessary too: the feed has a real `<source>` element carrying the
+  publisher name and homepage, so the fragile `" - "` split is gone.
+- Email + LinkedIn agents — Claude Code subagents over MCP. No packages.
+- Portal — stdlib `http.server` and `webbrowser`.
 - No Google libraries. That's the MCP choice paying for itself.
 
-`.env`:
-```
-ANTHROPIC_API_KEY=
-```
-That's the whole file. `GMAIL_CREDENTIALS_PATH` is unnecessary under the MCP
-path; `NEWS_API_KEY` is unnecessary because Google News RSS is keyless.
+**`.env` is also unnecessary.** Nothing needs `ANTHROPIC_API_KEY`: the agents
+that call a model run on the Claude Code subscription, not the metered API.
+(Worth knowing that those are separate — a Max plan carries no API credits,
+which is what killed the original LLM-summarizing news agent.)
 
 If a real news API is ever wanted: Currents (~600–1,000 req/day, commercial
 use OK), NewsData.io (200 credits/day), GNews (~100/day, non-commercial).
