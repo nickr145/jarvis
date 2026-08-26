@@ -25,18 +25,38 @@ Exactly one per message. When two apply, the earlier rule below wins.
 
 **Tuned for recall — a missed opportunity costs more than a noisy panel.**
 
-Anything plausibly about a role: recruiter outreach, application status
-updates, interview scheduling, referral offers, job alerts from boards.
-Include generic mass recruiter mail. When genuinely unsure whether something
-is job-related, classify it here rather than as `fyi`.
+Someone contacting *this user specifically* about a role: recruiter or hiring
+manager outreach, application status updates, interview scheduling, offers,
+referral offers, rejections. When genuinely unsure whether a message is a real
+approach or a broadcast, classify it here rather than as `job_alert`.
 
-This is the one category where over-surfacing is the correct error. Do not
-filter for quality — that's what `priority` is for.
+Over-surfacing is the correct error **here**. Do not filter for quality —
+that's what `priority` is for.
 
 Takes precedence over `needs_reply`: a recruiter asking "are you interested?"
 is a `job_opportunity`, not a reply obligation.
 
-### 2. `needs_reply`
+### 2. `job_alert`
+
+Automated digests from job boards, alert services and talent communities —
+LinkedIn job alerts, Indeed alerts, Haystack, company talent-community
+mailers. Sender is a no-reply address belonging to a job platform; the
+content is a listing feed rather than an approach.
+
+**These are a subscription, not an opportunity.** The user signed up for them,
+they arrive constantly, and against a real inbox they outnumber everything
+else roughly two to one. They collapse to a count line in the brief the same
+way newsletters do.
+
+Keyword matches inside this category still surface individually — see
+Priority. That's what preserves recall without flooding the panel.
+
+Gray area, decided: `match.indeed.com` mail that opens *"Hi Nicholas, your
+background could be a great match for this Strategy Analyst role"* is a
+`job_alert`, not a `job_opportunity`. It is personalized by template, not by
+a person. If it matches keywords it will surface on priority anyway.
+
+### 3. `needs_reply`
 
 **Tuned for precision — this panel is only useful if it stays short.**
 
@@ -53,13 +73,13 @@ A statement that only implies action ("I've sent over the draft") is `fyi`.
 Accept that a genuinely important email phrased as a statement will be missed
 here; that's the deliberate trade.
 
-### 3. `newsletter`
+### 4. `newsletter`
 
 Subscribed bulk mail: has an unsubscribe header or link, sent to a list, no
 individual author addressing the user. Marketing, digests, product updates,
 newsletters proper.
 
-### 4. `fyi`
+### 5. `fyi`
 
 Everything else. Automated but not subscribed — receipts, order confirmations,
 security alerts, calendar invites, CI notifications, GitHub mail. Also human
@@ -71,15 +91,28 @@ mail needing no response.
 genuinely bad to see a day late.
 
 Mark `high` when:
-- A `job_opportunity` names a **specific role** and mentions the user's
-  keywords — *product manager*, *AI*, *remote* — or is clearly personalized
-  rather than a mass send
+- A `job_opportunity` names a **specific role** matching the user's
+  `job_keywords` from `config/profile.json`, or is clearly written by a person
+  rather than generated
 - A `job_opportunity` carries a deadline or an interview time
-- A `needs_reply` is time-sensitive, or is a follow-up to something the user
-  has already not answered
+- A `job_alert` names a role matching `job_keywords`. **A high-priority
+  `job_alert` is listed individually in the brief rather than collapsed into
+  the count** — this is the mechanism that keeps recall without flooding.
+- A `needs_reply` is time-sensitive, or follows up on something the user has
+  already not answered
 
-Everything else is `normal`. Bulk recruiter blasts are `job_opportunity` +
-`normal` — surfaced, not shouted about.
+Everything else is `normal`.
+
+## Deduplication
+
+Job boards resend the same listing repeatedly. In one two-day sample:
+Scotiabank's talent community sent an identical notification 4×, LinkedIn sent
+"Data Engineer at BMO" 3× and "Software Developer at Fidelity Canada" 2×.
+
+Collapse messages sharing a sender and a subject within the window to a single
+entry, keeping the most recent. Near-identical subjects for the same role at
+the same company count as duplicates too. Note the repeat count in `note` when
+it's above one.
 
 ## The `note` field
 
@@ -103,7 +136,7 @@ note can't explain the call, the call was probably wrong.
   "window_start": "ISO-8601 — the floor actually used",
   "items": [
     {
-      "category": "job_opportunity | needs_reply | fyi | newsletter",
+      "category": "job_opportunity | job_alert | needs_reply | fyi | newsletter",
       "sender": "Display Name <address>",
       "subject": "...",
       "date": "ISO-8601 with offset",

@@ -87,13 +87,16 @@ moment to add a real server — not before.
 
 | Panel | Source | Status |
 |---|---|---|
-| **Needs You** | `email.json` — `job_opportunity` + `needs_reply` only | real |
+| **Needs You** | `email.json` — `job_opportunity` + `needs_reply`, plus `job_alert` items matching `job_keywords` | real |
 | **News** | `news.json` — top 3 per category | real |
 | **LinkedIn** | weekly draft, draft-only | step 6 |
 | **Wealthsimple** | — | blocked, renders empty |
 
-`fyi` and `newsletter` emails collapse to a count line rather than getting
-entries. Empty sections state that they're empty in one line.
+`fyi`, `newsletter` and `job_alert` emails collapse to a count line rather
+than getting entries — except `job_alert` items matching `job_keywords`, which
+are listed individually. A first run against the real inbox returned ~54
+unread threads in two days, ~29 of them bulk job-board digests, so collapsing
+that category is what makes the panel readable at all. Empty sections state that they're empty in one line.
 
 ### Not building: browser automation
 The original demo opened Chrome and drove Gmail. Skipped deliberately — **a
@@ -137,7 +140,7 @@ to local time, not truncate the string.
 {
   "items": [
     {
-      "category": "job_opportunity | needs_reply | fyi | newsletter",
+      "category": "job_opportunity | job_alert | needs_reply | fyi | newsletter",
       "sender": "...",
       "subject": "...",
       "date": "...",
