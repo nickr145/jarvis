@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jarvis</title>
+<style>
+:root{
+  --ground:oklch(0.17 0.014 240);
+  --surface:oklch(0.21 0.016 240);
+  --surface-2:oklch(0.25 0.018 240);
+  --line:oklch(0.32 0.020 240);
+  --ink:oklch(0.96 0.004 240);
+  --ink-dim:oklch(0.74 0.012 240);
+  --ink-faint:oklch(0.60 0.012 240);
+  --accent:oklch(0.80 0.115 205);
+  --alert:oklch(0.82 0.135 75);
+  --dead:oklch(0.55 0.020 240);
+
+  --sans:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono","JetBrains Mono",Menlo,monospace;
+
+  --s1:.25rem; --s2:.5rem; --s3:.75rem; --s4:1rem;
+  --s5:1.5rem; --s6:2rem; --s7:3rem;
+
+  --ease:cubic-bezier(.22,1,.36,1);
+}
+
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0; background:var(--ground); color:var(--ink);
+  font-family:var(--sans); font-size:.9375rem; line-height:1.55;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1100px;margin:0 auto;padding:var(--s6) var(--s5) var(--s7)}
+
+/* ---------- masthead ---------- */
+.mast{display:flex;flex-wrap:wrap;gap:var(--s3) var(--s5);align-items:baseline;
+  justify-content:space-between;padding-bottom:var(--s3)}
+.mark{font-family:var(--mono);font-size:1.0625rem;letter-spacing:.34em;
+  text-transform:uppercase;color:var(--ink);margin:0;font-weight:500}
+.mark span{color:var(--accent)}
+.mast-meta{font-family:var(--mono);font-size:.75rem;color:var(--ink-faint);
+  text-align:right;line-height:1.7}
+.mast-meta b{color:var(--ink-dim);font-weight:400}
+.rule{height:1px;background:linear-gradient(90deg,var(--accent) 0 88px,var(--line) 88px);
+  margin-bottom:var(--s6)}
+
+/* ---------- readout strip ---------- */
+.readout{border:1px solid var(--line);background:var(--surface);
+  padding:var(--s4) var(--s5);margin-bottom:var(--s6)}
+.readout-row{display:flex;flex-wrap:wrap;gap:var(--s5) var(--s7)}
+.cell{min-width:5.5rem}
+.cell dt{font-family:var(--mono);font-size:.6875rem;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--ink-faint);margin:0 0 var(--s1)}
+.cell dd{margin:0;font-family:var(--mono);font-size:1.5rem;line-height:1.1;
+  color:var(--ink);font-variant-numeric:tabular-nums}
+.cell.on dd{color:var(--alert)}
+.cell.zero dd{color:var(--ink-faint)}
+.readout-sub{display:flex;flex-wrap:wrap;gap:var(--s2) var(--s4);
+  margin-top:var(--s4);padding-top:var(--s3);border-top:1px solid var(--line)}
+.chip{font-family:var(--mono);font-size:.75rem;color:var(--ink-dim);
+  white-space:nowrap}
+.chip b{color:var(--accent);font-weight:500;font-variant-numeric:tabular-nums}
+.chip.none b{color:var(--ink-faint)}
+
+/* ---------- panels ---------- */
+.panel{margin-bottom:var(--s6)}
+.panel-head{display:flex;align-items:baseline;justify-content:space-between;
+  gap:var(--s4);border-bottom:1px solid var(--line);padding-bottom:var(--s2);
+  margin-bottom:var(--s3)}
+.panel-head h2{margin:0;font-size:.9375rem;font-weight:600;letter-spacing:.01em}
+.count{font-family:var(--mono);font-size:.75rem;color:var(--ink-faint);
+  font-variant-numeric:tabular-nums;white-space:nowrap}
+
+.row{display:block;padding:var(--s3) var(--s3) var(--s3) 0;
+  border-bottom:1px solid color-mix(in oklch,var(--line) 55%,transparent);
+  color:inherit;text-decoration:none;transition:background 160ms var(--ease),
+  padding-left 160ms var(--ease)}
+a.row:hover,a.row:focus-visible{background:var(--surface);padding-left:var(--s3);
+  outline:none}
+a.row:focus-visible{box-shadow:inset 2px 0 0 var(--accent)}
+.row:last-child{border-bottom:0}
+.row-top{display:flex;gap:var(--s3);align-items:baseline;flex-wrap:wrap}
+.row-title{font-weight:500;line-height:1.4;overflow-wrap:anywhere}
+.row-sub{font-family:var(--mono);font-size:.75rem;color:var(--ink-faint);
+  margin-top:var(--s1);overflow-wrap:anywhere}
+.row-note{font-size:.8125rem;color:var(--ink-dim);margin-top:var(--s1)}
+
+.tag{font-family:var(--mono);font-size:.6875rem;letter-spacing:.1em;
+  text-transform:uppercase;padding:.1rem .4rem;border:1px solid var(--line);
+  color:var(--ink-faint);white-space:nowrap;flex-shrink:0}
+.tag.hot{color:var(--alert);border-color:color-mix(in oklch,var(--alert) 45%,transparent)}
+
+/* ---------- panel states ---------- */
+.state{font-size:.875rem;padding:var(--s4) 0;line-height:1.6;max-width:62ch}
+.state.empty{color:var(--ink-dim)}
+.state.empty em{color:var(--ink-faint);font-style:normal}
+.state.failed{color:var(--alert)}
+.state.blocked{color:var(--ink-dim)}
+.state code{font-family:var(--mono);font-size:.8125rem;
+  color:var(--ink-faint);word-break:break-word}
+
+.panel.inert .panel-head{border-bottom-color:color-mix(in oklch,var(--line) 55%,transparent)}
+.panel.inert h2{color:var(--dead);font-weight:500}
+
+/* ---------- news ---------- */
+.cats{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));
+  gap:var(--s5) var(--s6)}
+.cat h3{margin:0 0 var(--s2);font-family:var(--mono);font-size:.6875rem;
+  letter-spacing:.16em;text-transform:uppercase;color:var(--accent);font-weight:500}
+
+/* ---------- footer ---------- */
+.foot{margin-top:var(--s7);padding-top:var(--s4);border-top:1px solid var(--line);
+  font-family:var(--mono);font-size:.6875rem;color:var(--ink-faint);
+  line-height:1.9;overflow-x:auto}
+
+@media (max-width:560px){
+  .wrap{padding:var(--s5) var(--s4) var(--s6)}
+  .mast-meta{text-align:left}
+  .readout{padding:var(--s4)}
+  .readout-row{gap:var(--s4) var(--s5)}
+  .cell dd{font-size:1.25rem}
+}
+@media (prefers-reduced-motion:reduce){
+  *{animation-duration:.01ms !important;transition-duration:.01ms !important}
+  a.row:hover,a.row:focus-visible{padding-left:0}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="mast">
+    <h1 class="mark">Jar<span>v</span>is</h1>
+    <div class="mast-meta" id="meta">reading output…</div>
+  </header>
+  <div class="rule"></div>
+
+  <section class="readout" aria-label="Summary">
+    <dl class="readout-row" id="readout"></dl>
+    <div class="readout-sub" id="breakdown" hidden></div>
+  </section>
+
+  <section class="panel" id="p-needs">
+    <div class="panel-head"><h2>Needs you</h2><span class="count"></span></div>
+    <div class="body"></div>
+  </section>
+
+  <section class="panel" id="p-waiting">
+    <div class="panel-head"><h2>Waiting on them</h2><span class="count"></span></div>
+    <div class="body"></div>
+  </section>
+
+  <section class="panel" id="p-jobs">
+    <div class="panel-head"><h2>Jobs</h2><span class="count"></span></div>
+    <div class="body"></div>
+  </section>
+
+  <section class="panel" id="p-news">
+    <div class="panel-head"><h2>News</h2><span class="count"></span></div>
+    <div class="body"></div>
+  </section>
+
+  <section class="panel inert" id="p-linkedin">
+    <div class="panel-head"><h2>LinkedIn</h2><span class="count">step 6</span></div>
+    <div class="body"><p class="state blocked">Not built yet. The content agent
+    is step 6 — it drafts a post from the week's briefs, and never publishes.</p></div>
+  </section>
+
+  <section class="panel inert" id="p-wealth">
+    <div class="panel-head"><h2>Wealthsimple</h2><span class="count">blocked</span></div>
+    <div class="body"><p class="state blocked">No read-only API exists. The only
+    route is a paid third-party bridge, so this panel stays empty rather than
+    showing a number nothing produced.</p></div>
+  </section>
+
+  <footer class="foot" id="foot"></footer>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const el = (t, c, x) => { const n = document.createElement(t);
+  if (c) n.className = c; if (x != null) n.textContent = x; return n; };
+const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const fmtTime = iso => { if (!iso) return '';
+  const d = new Date(iso); if (isNaN(d)) return iso;
+  return d.toLocaleString([], {month:'short', day:'numeric',
+    hour:'numeric', minute:'2-digit'}); };
+
+async function grab(url){
+  const r = await fetch(url, {cache:'no-store'});
+  if (!r.ok) throw new Error(`${r.status} ${r.statusText} — ${url}`);
+  return r.json();
+}
+
+/* Panels own four distinct states. `blocked` is set in markup. */
+function setPanel(id, {items, render, empty, error, count}){
+  const p = $(id), body = p.querySelector('.body');
+  const c = p.querySelector('.count');
+  body.replaceChildren();
+  if (error){
+    c.textContent = 'failed';
+    const n = el('p','state failed','Could not read this. ');
+    n.append(el('code', null, error));
+    body.append(n);
+    return;
+  }
+  c.textContent = count ?? (items ? items.length : '');
+  if (!items || !items.length){
+    const n = el('p','state empty');
+    n.append(document.createTextNode(empty.lead));
+    if (empty.detail){ n.append(' '); n.append(el('em',null,empty.detail)); }
+    body.append(n);
+    return;
+  }
+  items.forEach(i => body.append(render(i)));
+}
+
+function mailRow(it){
+  const a = it.url ? el('a','row') : el('div','row');
+  if (it.url){ a.href = it.url; a.target = '_blank'; a.rel = 'noopener'; }
+  const top = el('div','row-top');
+  if (it.priority === 'high') top.append(el('span','tag hot','high'));
+  top.append(el('span','row-title', it.subject || '(no subject)'));
+  a.append(top);
+  a.append(el('div','row-sub', `${it.sender || ''} · ${fmtTime(it.date)}`));
+  if (it.note) a.append(el('div','row-note', it.note));
+  return a;
+}
+
+function newsBlock(cat){
+  const box = el('div','cat');
+  box.append(el('h3', null, cat.category));
+  if (cat.error){
+    box.append(el('p','state failed', `Feed failed — ${cat.error}`)); return box;
+  }
+  if (!cat.items || !cat.items.length){
+    box.append(el('p','state empty','No items returned.')); return box;
+  }
+  cat.items.forEach(i => {
+    const a = i.url ? el('a','row') : el('div','row');
+    if (i.url){ a.href = i.url; a.target = '_blank'; a.rel = 'noopener'; }
+    a.append(el('div','row-title', i.headline || '(no headline)'));
+    a.append(el('div','row-sub',
+      [i.source, fmtTime(i.published)].filter(Boolean).join(' · ')));
+    box.append(a);
+  });
+  return box;
+}
+
+function readout(cells){
+  const dl = $('#readout'); dl.replaceChildren();
+  cells.forEach(([label, val, hot]) => {
+    const d = el('div','cell' + (val > 0 && hot ? ' on' : val === 0 ? ' zero' : ''));
+    d.append(el('dt', null, label));
+    const dd = el('dd', null, REDUCED ? String(val) : '0');
+    d.append(dd); dl.append(d);
+    if (!REDUCED && val > 0) countTo(dd, val);
+  });
+}
+
+function countTo(node, target){
+  const dur = 420, t0 = performance.now();
+  const tick = t => { const p = Math.min(1, (t - t0)/dur);
+    node.textContent = Math.round(target * (1 - Math.pow(1-p, 3)));
+    if (p < 1) requestAnimationFrame(tick); };
+  requestAnimationFrame(tick);
+}
+
+/* Role counts are derived from subjects at render time — never authored. */
+const ROLES = [
+  ['new grad',  /new grad|early career|entry.level|junior|associate/i],
+  ['intern',    /intern|co.?op/i],
+  ['remote',    /\bremote\b/i],
+  ['swe',       /software (engineer|developer)|\bdeveloper\b/i],
+  ['data/ml',   /\bdata\b.{0,24}\b(engineer|analyst|scientist)\b|\b(engineer|analyst|scientist)\b.{0,24}\bdata\b|machine learning|\bai engineer\b/i],
+];
+
+function breakdown(jobItems){
+  const box = $('#breakdown'); box.replaceChildren();
+  if (!jobItems.length){ box.hidden = true; return; }
+  box.hidden = false;
+  ROLES.forEach(([label, re]) => {
+    const n = jobItems.filter(i => re.test(i.subject || '')).length;
+    const c = el('span','chip' + (n ? '' : ' none'));
+    c.append(el('b', null, String(n)));
+    c.append(document.createTextNode(' ' + label));
+    box.append(c);
+  });
+}
+
+(async function(){
+  let idx = null, errIdx = null;
+  try { idx = await grab('../output/index.json'); }
+  catch(e){ errIdx = e.message; }
+
+  const date = idx && idx.latest;
+  $('#meta').innerHTML = date
+    ? `<b>${date}</b><br>reading output/${date}/`
+    : `<b>no output</b><br>run an agent first`;
+
+  let mail = null, mailErr = errIdx, news = null, newsErr = errIdx;
+  if (date){
+    try { mail = await grab(`../output/${date}/email.json`); }
+    catch(e){ mailErr = e.message; }
+    try { news = await grab(`../output/${date}/news.json`); }
+    catch(e){ newsErr = e.message; }
+  }
+
+  const items   = (mail && mail.items) || [];
+  const needs   = items.filter(i => i.needs_response);
+  const waiting = items.filter(i => i.awaiting_reply);
+  const opps    = items.filter(i => i.category === 'job_opportunity');
+  const alerts  = items.filter(i => i.category === 'job_alert');
+  const hot     = alerts.filter(i => i.priority === 'high');
+  const news_n  = news ? (news.categories||[]).reduce((a,c)=>a+(c.items||[]).length,0) : 0;
+
+  /* Opportunities are rare and always shown. Board alerts are capped — the
+     panel is bounded by a cap, not by a filter, so tuning keywords can never
+     make it unreadably long. Computed before the strip so the strip and the
+     panel report the same number rather than two different slices. */
+  const ALERT_CAP = 6;
+  const shown  = opps.concat(hot.slice(0, ALERT_CAP));
+  const jobMail = opps.length + alerts.length;
+  const hidden = jobMail - shown.length;
+
+  /* `surfaced` is what the Jobs panel actually lists; `job mail` is everything
+     that arrived. They are a subset and its total, not two sibling metrics —
+     the labels have to say so or the two numbers look unreconciled. */
+  readout([
+    ['needs you',  needs.length,   true],
+    ['waiting',    waiting.length, true],
+    ['surfaced',   shown.length,   false],
+    ['job mail',   jobMail,        false],
+    ['headlines',  news_n,         false],
+  ]);
+  breakdown(opps.concat(alerts));
+
+  /* When no agent has ever run there is nothing to be empty *about*. Saying
+     "nothing owed" would assert a fact no file supports. */
+  const noRun = !date;
+  const nothingRan = {lead:'No agent output yet.',
+    detail:'Run ./jarvis or an agent directly; this panel reports what a run found.'};
+
+  setPanel('#p-needs', {items:needs, render:mailRow, error:mailErr,
+    empty: noRun ? nothingRan
+      : {lead:'Nothing owed.', detail:'No one has asked you anything in this window.'}});
+
+  setPanel('#p-waiting', {items:waiting, render:mailRow, error:mailErr,
+    empty: noRun ? nothingRan
+      : {lead:'No open questions of yours.',
+         detail:'Threads where you replied last and got an answer are not counted here.'}});
+
+  setPanel('#p-jobs', {
+    items: shown, render: mailRow, error: mailErr,
+    count: hidden > 0 ? `${shown.length} of ${jobMail}` : String(shown.length),
+    empty: noRun ? nothingRan
+      : {lead:'No job mail in this window.',
+         detail:'Board digests, if any, are counted in the strip above.'}});
+
+  if (shown.length && hidden > 0){
+    const p = el('p','state empty');
+    p.append(el('em', null,
+      `+${hidden} more board alerts, ranked lower. The individual listings inside them aren't parsed yet — that's step 3b.`));
+    $('#p-jobs .body').append(p);
+  }
+
+  const cats = (news && news.categories) || [];
+  setPanel('#p-news', {items:cats.length?[1]:[], render:()=>{
+      const g = el('div','cats'); cats.forEach(c => g.append(newsBlock(c))); return g;
+    }, error:newsErr, count:news_n,
+    empty: news
+      ? {lead:'The news agent ran and returned nothing.',
+         detail:'Not the same as a missing file — every feed came back empty.'}
+      : {lead:'No news file for this date.', detail:'Run agents/news_agent.py.'}});
+
+  const bits = [];
+  if (mail){ bits.push(`email.json · ${items.length} threads · window from ${mail.window_start||'?'}`);
+    if (mail.coverage) bits.push(mail.coverage);
+    if (mail.method) bits.push(mail.method); }
+  else bits.push(`email.json unavailable — ${mailErr}`);
+  if (news) bits.push(`news.json · generated ${fmtTime(news.generated_at)}`);
+  else bits.push(`news.json unavailable — ${newsErr}`);
+  bits.push('Every figure above is computed from these files at load. Nothing here is authored.');
+  $('#foot').replaceChildren(...bits.map(b => el('div', null, b)));
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+"""
+jarvis — open the portal.
+
+    ./jarvis                 refresh news, then open the portal
+    ./jarvis --no-refresh    open whatever is already on disk
+    ./jarvis --port 8931     use a specific port
+
+Serves the repo root so the page can read output/ alongside portal/.
+The email agent is not run here — it needs the Gmail MCP, so it runs as a
+Claude Code subagent and leaves email.json behind for this to pick up.
+"""
+
+import argparse
+import functools
+import http.server
+import json
+import socketserver
+import subprocess
+import sys
+import threading
+import webbrowser
+from pathlib import Path
+
+ROOT = Path(__file__).parent.resolve()
+OUTPUT = ROOT / "output"
+
+
+def write_index() -> str | None:
+    """List the dated output directories so a static page can find the newest.
+
+    A page served over http:// cannot list a directory, and guessing today's
+    date would make the portal silently blank on any day an agent didn't run.
+    """
+    dates = sorted(
+        d.name for d in OUTPUT.iterdir()
+        if d.is_dir() and len(d.name) == 10 and d.name[4] == "-"
+    ) if OUTPUT.is_dir() else []
+
+    latest = dates[-1] if dates else None
+    OUTPUT.mkdir(exist_ok=True)
+    (OUTPUT / "index.json").write_text(
+        json.dumps({"latest": latest, "dates": dates}, indent=2)
+    )
+    return latest
+
+
+def refresh_news() -> None:
+    script = ROOT / "agents" / "news_agent.py"
+    if not script.exists():
+        return
+    try:
+        r = subprocess.run([sys.executable, str(script)], capture_output=True,
+                           text=True, timeout=60)
+        print((r.stdout or r.stderr).strip() or "news_agent: no output")
+    except subprocess.TimeoutExpired:
+        print("news_agent: timed out — opening with whatever is on disk")
+    except OSError as e:
+        print(f"news_agent: could not run ({e}) — opening existing output")
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(add_help=True)
+    ap.add_argument("--no-refresh", action="store_true",
+                    help="skip the news agent, just open what exists")
+    ap.add_argument("--port", type=int, default=8731)
+    args = ap.parse_args()
+
+    if not args.no_refresh:
+        refresh_news()
+
+    latest = write_index()
+    if latest is None:
+        print("no output/ data yet — the portal will open and say so")
+    else:
+        print(f"latest output: {latest}")
+
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler,
+                                directory=str(ROOT))
+    socketserver.TCPServer.allow_reuse_address = True
+    try:
+        httpd = socketserver.TCPServer(("127.0.0.1", args.port), handler)
+    except OSError as e:
+        sys.exit(f"could not bind port {args.port}: {e}\ntry --port {args.port + 1}")
+
+    url = f"http://127.0.0.1:{args.port}/portal/index.html"
+    print(f"portal: {url}\nctrl-c to stop")
+    threading.Timer(0.4, webbrowser.open, args=(url,)).start()
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("\nstopped")
+    finally:
+        httpd.server_close()
+
+
+if __name__ == "__main__":
+    main()
