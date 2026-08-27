@@ -12,7 +12,7 @@ placeholder data. An empty panel is honest; a fake populated one isn't.
 - [x] `news_agent.py` — stdlib only, no API key, writes `news.json`
 - [x] email agent — Gmail MCP + [`config/email_rules.md`](config/email_rules.md)
 - [ ] job-alert miner — parse listings out of digests (step 3b)
-- [ ] portal — static page + `jarvis` launcher
+- [x] portal — static page + `jarvis` launcher
 - [ ] use it for a week, fix what's annoying
 - [ ] linkedin content agent (draft-only)
 - [ ] voice
@@ -26,6 +26,12 @@ No dependencies — everything is stdlib or runs as a Claude Code subagent.
 No `.env` needed; nothing here calls the metered API.
 
 ## Running
+```bash
+./jarvis                 # refresh news, open the portal
+./jarvis --no-refresh    # open whatever is already on disk
+./jarvis --port 8931     # if 8731 is taken
+```
+Or run an agent on its own:
 ```bash
 python agents/news_agent.py     # → output/YYYY-MM-DD/news.json
 ```
