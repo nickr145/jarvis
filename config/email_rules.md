@@ -143,6 +143,21 @@ receipt, a listing feed, a newsletter. Most mail is `false`.
 sent by the user, nothing is owed — `needs_response: false`, whatever the
 text says. A question already answered is not an open question.
 
+**Application state overrides thread state.** Transactional job mail arrives
+in *separate threads* for the same application, so thread state is not enough.
+Before marking a request as open, look for a later message about the same
+application — match on the application or requisition ID where present,
+otherwise on company plus role — that resolves it.
+
+Real case: Amazon sent *"Reminder to complete your Amazon Assessment — your
+application will not be considered until all sections are completed"* at 16:24
+on 22 August, and *"Assessment Completed — you've successfully submitted"* at
+21:17 the same day, in a different thread. The reminder is still unread. A
+thread-level rule surfaces a stale ACTION REQUIRED as urgent; the user had
+already done it without opening the email.
+
+**Unread does not mean unhandled.** People act outside their inbox.
+
 ### `awaiting_reply`
 
 A second boolean, the mirror image. Set `true` when the newest message in the
