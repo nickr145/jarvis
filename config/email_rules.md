@@ -25,10 +25,18 @@ Exactly one per message. When two apply, the earlier rule below wins.
 
 **Tuned for recall — a missed opportunity costs more than a noisy panel.**
 
-Someone contacting *this user specifically* about a role: recruiter or hiring
-manager outreach, application status updates, interview scheduling, offers,
-referral offers, rejections. When genuinely unsure whether a message is a real
-approach or a broadcast, classify it here rather than as `job_alert`.
+Anything about **an application or candidacy this user already has**, plus
+genuine approaches. Two families:
+
+*Transactional* — automated but about their specific application: status
+updates, assessment invitations and reminders, interview confirmations,
+rejections, "we received your application". These arrive from `noreply@`
+addresses and still belong here.
+
+*Approaches* — a recruiter or hiring manager writing to them personally.
+
+When genuinely unsure whether something is a real approach or a broadcast,
+classify it here rather than as `job_alert`.
 
 Over-surfacing is the correct error **here**. Do not filter for quality —
 that's what `priority` is for.
@@ -43,13 +51,24 @@ Automated digests from job boards, alert services and talent communities —
 LinkedIn job alerts, Indeed alerts, Haystack, company talent-community
 mailers. The content is a listing feed rather than an approach.
 
-**Judge by content, not sender domain.** A real recruiter frequently writes
-through an ATS: `TD@myworkday.com` sent *"I am happy to let you know that you
-have been selected for an interview… could you please let me know a good time
-to connect"* — a human, writing personally, from a platform address. A
-domain-based rule files that as an alert and loses the most important email in
-the inbox. Ask instead: is this addressed to this person about their situation,
-or is it a list of openings sent to everyone who subscribed?
+**The test is engagement, not sender.** Does the message concern a role the
+user has already engaged with — an application ID, "your application", "your
+assessment", "your interview"? That is `job_opportunity`, however automated the
+sender looks. Is it presenting roles they have not engaged with? That is a
+`job_alert`.
+
+Sender address is never the test. Real cases from this inbox:
+
+- `noreply@mail.amazon.jobs` — a no-reply address on a jobs subdomain, and it
+  carries *"your application will not be considered until all sections of the
+  assessment are completed"*. Highest-stakes mail in the account.
+- `TD@myworkday.com` — an ATS address; a human recruiter wrote through it.
+- `info@devstaff.ca` — a generic inbox address; a named recruiter wrote
+  *"I came across your profile and thought you might be a great fit."*
+- `yogita.chharia.venuiti.com@viazohorecruit.com` — an ATS relay carrying a
+  personal message with an attached job description.
+
+A domain-based rule misfiles every one of these.
 
 **These are a subscription, not an opportunity.** The user signed up for them,
 they arrive constantly, and against a real inbox they outnumber everything
@@ -72,10 +91,14 @@ jobs panel keeps its context and the reply signal is not lost.
 
 **Tuned for precision — this panel is only useful if it stays short.**
 
-All three must hold:
-- A real person wrote it (not automated, not bulk)
-- It was sent to the user directly, not a list they happen to be on
+Both must hold:
+- A real person wrote it (not automated, not bulk marketing)
 - **It asks a question, makes a request, or needs a decision from them**
+
+*Removed:* an earlier version also required the mail be addressed directly
+rather than to a list. Real mail broke it — Amazon's assessment invitation and
+TCS's interview job description both went to `Undisclosed recipients:;`, and
+both mattered. A BCC blast can still carry an interview time.
 
 The third condition is what keeps the panel trustworthy. "Thanks!", "sounds
 good", "received" and similar acknowledgements are `fyi`, not `needs_reply` —
@@ -112,6 +135,18 @@ receipt, a listing feed, a newsletter. Most mail is `false`.
 **Thread state overrides content.** If the newest message in the thread was
 sent by the user, nothing is owed — `needs_response: false`, whatever the
 text says. A question already answered is not an open question.
+
+### `awaiting_reply`
+
+A second boolean, the mirror image. Set `true` when the newest message in the
+thread is **from the user**, it asked something, and more than 5 days have
+passed with no response.
+
+This is a real state that `needs_response` cannot express. In this inbox, the
+user asked a TCS recruiter *"Could you let me know a time that works?"* on
+11 August and nothing came back. Nothing is owed by the user — but the thread
+is dying, and a brief that only ever says "you owe replies" will never show
+it. Surface these under a separate line: *waiting on them.*
 
 Worked examples from real threads:
 
@@ -152,7 +187,10 @@ Scotiabank's talent community sent an identical notification 4×, LinkedIn sent
 "Data Engineer at BMO" 3× and "Software Developer at Fidelity Canada" 2×.
 
 Collapse messages sharing a sender and a subject within the window to a single
-entry, keeping the most recent. Near-identical subjects for the same role at
+entry, keeping the most recent. **Deduplicate within a thread as well as
+across threads** — LinkedIn sent "Software Engineer I at TD" five times inside
+one thread over two days, "Application Developer at CIBC" four times, and
+"Python Engineer at SGA" four times. Near-identical subjects for the same role at
 the same company count as duplicates too. Note the repeat count in `note` when
 it's above one.
 
@@ -184,6 +222,7 @@ note can't explain the call, the call was probably wrong.
       "date": "ISO-8601 with offset",
       "priority": "high | normal",
       "needs_response": true,
+      "awaiting_reply": false,
       "note": "why it was classified this way"
     }
   ]

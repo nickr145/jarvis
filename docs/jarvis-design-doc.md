@@ -87,7 +87,9 @@ moment to add a real server — not before.
 
 | Panel | Source | Status |
 |---|---|---|
-| **Needs You** | `email.json` — anything with `needs_response: true`, plus `job_alert` items matching `job_keywords` | real |
+| **Needs You** | `email.json` — anything with `needs_response: true` | real |
+| **Waiting on them** | `email.json` — anything with `awaiting_reply: true` | real |
+| **Jobs** | `email.json` — `job_opportunity`, plus top-ranked `job_alert` items | real |
 | **News** | `news.json` — top 3 per category | real |
 | **LinkedIn** | weekly draft, draft-only | step 6 |
 | **Wealthsimple** | — | blocked, renders empty |
@@ -146,6 +148,7 @@ to local time, not truncate the string.
       "date": "...",
       "priority": "high | normal",
       "needs_response": true,
+      "awaiting_reply": false,
       "note": "why it was classified this way"
     }
   ]
