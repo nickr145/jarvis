@@ -161,14 +161,26 @@ already done it without opening the email.
 ### `awaiting_reply`
 
 A second boolean, the mirror image. Set `true` when the newest message in the
-thread is **from the user**, it asked something, and more than 5 days have
-passed with no response.
+thread is **from the user**, it asked something, more than 5 days have passed,
+and **no later activity anywhere resolves it**.
 
-This is a real state that `needs_response` cannot express. In this inbox, the
-user asked a TCS recruiter *"Could you let me know a time that works?"* on
-11 August and nothing came back. Nothing is owed by the user — but the thread
-is dying, and a brief that only ever says "you owe replies" will never show
-it. Surface these under a separate line: *waiting on them.*
+That last clause is the whole rule. Silence inside one thread is not evidence
+of silence.
+
+**Conversations leave email.** They move to phone calls, calendar invites, and
+new threads. Before marking a thread as waiting, check for later mail about the
+same application — same company, same role, or a matching requisition ID — and
+for a calendar event that would only exist if the thing had been arranged.
+
+Real case, and the one that first motivated this rule wrongly: the user asked a
+TCS recruiter *"Could you let me know a time that works?"* on 11 August. Judged
+on that thread alone it looks like sixteen days of silence. It was answered in
+two — the scheduling happened on a phone call, and a **separate** thread on
+13 August carried the job description *"for your upcoming interview on August
+14"*, followed by two interview confirmations. Nothing was waiting on anyone.
+
+Apply the same check to `needs_response`. Both booleans are claims about the
+state of a conversation, and a conversation is not the same object as a thread.
 
 Worked examples from real threads:
 
