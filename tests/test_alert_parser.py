@@ -160,5 +160,39 @@ class IndeedTests(unittest.TestCase):
             self.assertNotIn(junk, titles)
 
 
+class RecencyTests(unittest.TestCase):
+    def test_indeed_age_line_is_captured(self):
+        from agents.alert_parser import parse
+        rows = parse((FIXTURES / "indeed_digest.txt").read_text(),
+                     "donotreply@jobalert.indeed.com", "2026-08-25")
+        ages = {x["company"]: x["posted"] for x in rows}
+        self.assertEqual(ages["TD Bank"], "1 day ago")
+        self.assertEqual(ages["Scotiabank"], "Just posted")
+
+    def test_age_days_reads_the_posted_line_before_the_email_date(self):
+        from agents.alert_parser import age_days
+        self.assertEqual(age_days({"posted": "Just posted"}), 0.0)
+        self.assertEqual(age_days({"posted": "6 days ago"}), 6.0)
+        # email date is only the fallback
+        self.assertEqual(
+            age_days({"posted": None, "first_seen": "2026-08-20"}, "2026-08-27"), 7.0)
+
+    def test_unknown_age_is_not_treated_as_fresh(self):
+        from agents.alert_parser import age_days, score
+        self.assertIsNone(age_days({"posted": None, "first_seen": None}))
+        base = {"title": "Software Engineer", "location": "Toronto"}
+        unknown = score(dict(base, posted=None, first_seen=None), [], today="2026-08-27")
+        fresh = score(dict(base, posted="Just posted"), [], today="2026-08-27")
+        self.assertLess(unknown, fresh)
+
+    def test_stale_listing_ranks_below_an_otherwise_equal_fresh_one(self):
+        from agents.alert_parser import rank
+        a = {"title": "Junior Software Engineer", "location": "Toronto",
+             "company": "A", "posted": "Just posted"}
+        b = {"title": "Junior Software Engineer", "location": "Toronto",
+             "company": "B", "posted": "30 days ago"}
+        self.assertEqual(rank([b, a], ["software engineer"], today="2026-08-27")[0]["company"], "A")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

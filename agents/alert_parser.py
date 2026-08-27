@@ -99,6 +99,7 @@ def parse_linkedin(body: str, received: str | None = None,
             "url": _clean_linkedin_url(m.group(1)),
             "job_id": m.group(1),
             "source": "linkedin",
+            "posted": None,  # not present in the digest; first_seen is the proxy
             "first_seen": received,
         })
     return listings
@@ -175,6 +176,7 @@ def parse_indeed(body: str, received: str | None = None,
         company, location = [x.strip() for x in coloc.rsplit(" - ", 1)]
 
         salary = next((ln for ln in content[2:] if _INDEED_SALARY.search(ln)), None)
+        posted = next((ln for ln in lines if _INDEED_AGE.match(ln)), None)
 
         listings.append({
             "title": title,
@@ -184,6 +186,7 @@ def parse_indeed(body: str, received: str | None = None,
             "job_id": job_id,
             "source": "indeed",
             "salary": salary,
+            "posted": posted,
             "first_seen": received,
         })
     return listings
@@ -235,7 +238,35 @@ def dedupe(listings: Iterable[dict]) -> list[dict]:
     return list(best.values())
 
 
-def score(listing: dict, keywords: Iterable[str], home: str = "ON") -> int:
+_AGE_DAYS = re.compile(r"^(just posted|active)|^(\d+)\+? *(hour|day|week|month)", re.I)
+
+
+def age_days(listing: dict, today: str | None = None) -> float | None:
+    """Days since posting, from Indeed's age line where present, otherwise from
+    when the email arrived. Returns None when neither is known — an unknown age
+    is not treated as fresh."""
+    posted = (listing.get("posted") or "").strip().lower()
+    if posted:
+        if posted.startswith(("just posted", "active")):
+            return 0.0
+        m = re.match(r"(\d+)\+? *(hour|day|week|month)", posted)
+        if m:
+            n, unit = int(m.group(1)), m.group(2)
+            return n * {"hour": 1 / 24, "day": 1, "week": 7, "month": 30}[unit]
+    seen, ref = listing.get("first_seen"), today
+    if seen and ref:
+        try:
+            from datetime import date
+            a = date.fromisoformat(seen[:10])
+            b = date.fromisoformat(ref[:10])
+            return float((b - a).days)
+        except ValueError:
+            return None
+    return None
+
+
+def score(listing: dict, keywords: Iterable[str], home: str = "ON",
+          today: str | None = None) -> int:
     """Location and seniority outrank keywords.
 
     Keyword matching alone cannot shrink this list: the user receives a
@@ -269,14 +300,21 @@ def score(listing: dict, keywords: Iterable[str], home: str = "ON") -> int:
     if _SALARY.search(blob):
         s += 1
 
+    # Recency. A posting a week old has had a week of applicants, which matters
+    # more for new-grad roles than for senior ones. An unknown age scores 0 —
+    # never the fresh bonus, because we do not know that it is fresh.
+    d = age_days(listing, today)
+    if d is not None:
+        s += 4 if d <= 1 else 3 if d <= 3 else 1 if d <= 7 else -2
+
     return s
 
 
 def rank(listings: Iterable[dict], keywords: Iterable[str],
-         home: str = "ON") -> list[dict]:
+         home: str = "ON", today: str | None = None) -> list[dict]:
     """Rank, then let the caller cap. The panel is bounded by a cap rather than
     a filter, so no amount of keyword mistuning can make it unreadably long."""
     kws = list(keywords)
-    scored = [(score(x, kws, home), i, x) for i, x in enumerate(listings)]
+    scored = [(score(x, kws, home, today), i, x) for i, x in enumerate(listings)]
     scored.sort(key=lambda t: (-t[0], t[1]))
     return [x for _, _, x in scored]
