@@ -247,8 +247,15 @@ def age_days(listing: dict, today: str | None = None) -> float | None:
     is not treated as fresh."""
     posted = (listing.get("posted") or "").strip().lower()
     if posted:
-        if posted.startswith(("just posted", "active")):
+        # Sources phrase this differently: Indeed says "Just posted" / "6 days
+        # ago", Workday says "Posted Today" / "Posted 2 Days Ago". Normalise the
+        # prefix so one function understands both rather than each adapter
+        # inventing its own age vocabulary.
+        posted = re.sub(r"^posted +", "", posted)
+        if posted.startswith(("just posted", "active", "today")):
             return 0.0
+        if posted.startswith("yesterday"):
+            return 1.0
         m = re.match(r"(\d+)\+? *(hour|day|week|month)", posted)
         if m:
             n, unit = int(m.group(1)), m.group(2)

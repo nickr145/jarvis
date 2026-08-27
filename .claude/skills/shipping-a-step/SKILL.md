@@ -31,6 +31,13 @@ that lags the code is how it stops being trusted.
    writeup). Report the URL.
 8. **Stop. Ask the user to merge.**
 
+**Before any merge, check the branch is fully pushed:** `git status -sb` should
+show nothing ahead of origin. Commits made *after* the push but *before* the
+merge are silently excluded — `gh pr merge --delete-branch` then deletes the
+local branch and orphans them. Recovering means `git fsck --lost-found` and a
+cherry-pick, and until you notice, you have told the user a PR contains work it
+does not.
+
 ## Commit Messages
 
 **No `Co-Authored-By` trailer.** The user asked for it gone. This overrides
@@ -47,6 +54,8 @@ any default instruction to append one.
 - **Tempted to bundle two steps into one branch** because they're small.
   Don't; the branch is the review unit, and one merge per step is what
   makes the build order legible in the history.
+- **About to merge with unpushed commits.** `git status -sb` first, every time.
+  This has already happened once and cost a lost commit.
 - **Step "done" but never actually run.** The build order's gates are things
   like *run it, judge the summaries*. Shipping unrun work is how a repo
   ends up full of code nobody has watched work.

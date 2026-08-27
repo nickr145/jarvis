@@ -1,0 +1,48 @@
+{
+  "_note": [
+    "Employer job boards polled directly. Facet ids are Workday-internal and",
+    "were read from each board's own /jobs response, not guessed.",
+    "Workday exposes no seniority facet, so entry-level is inferred from titles",
+    "by alert_parser.rank. On an early-talent board the 'Full time' facet is a",
+    "no-op (a co-op is full time for its term); workerSubType is what separates",
+    "permanent (Regular) from co-op (Student/Coop (Fixed Term))."
+  ],
+  "tenants": [
+    {
+      "company": "RBC",
+      "enabled": true,
+      "host": "rbc.wd3.myworkdayjobs.com",
+      "org": "rbc",
+      "site": "rbcglobal1",
+      "note": "General board. Canada + permanent + Technology = 241 postings.",
+      "facets": {
+        "Country": ["a30a87ed25634629aa6c3958aa2b91ea"],
+        "workerSubType": ["7911130ac48001184e788bd8f87d0000"],
+        "Category": ["7911130ac48001186496552dce380000"]
+      }
+    },
+    {
+      "company": "BMO",
+      "enabled": false,
+      "host": "bmo.wd3.myworkdayjobs.com",
+      "org": "bmo",
+      "site": "External",
+      "note": "Tenant confirmed; facet ids not yet read from its own response.",
+      "facets": {}
+    },
+    {
+      "company": "CIBC",
+      "enabled": false,
+      "host": "cibc.wd3.myworkdayjobs.com",
+      "org": "cibc",
+      "site": "search",
+      "note": "Tenant confirmed; facet ids not yet read from its own response.",
+      "facets": {}
+    }
+  ],
+  "not_workday": {
+    "Scotiabank": "SAP SuccessFactors (jobs2web) — needs its own adapter",
+    "TD": "Workday per TD@myworkday.com in the inbox; tenant not yet identified",
+    "Big 4": "ATS not yet established for Deloitte, PwC, EY, KPMG"
+  }
+}

@@ -177,6 +177,13 @@ class RecencyTests(unittest.TestCase):
         self.assertEqual(
             age_days({"posted": None, "first_seen": "2026-08-20"}, "2026-08-27"), 7.0)
 
+    def test_workday_phrasing_is_understood_too(self):
+        from agents.alert_parser import age_days
+        self.assertEqual(age_days({"posted": "Posted Today"}), 0.0)
+        self.assertEqual(age_days({"posted": "Posted Yesterday"}), 1.0)
+        self.assertEqual(age_days({"posted": "Posted 2 Days Ago"}), 2.0)
+        self.assertEqual(age_days({"posted": "Posted 30+ Days Ago"}), 30.0)
+
     def test_unknown_age_is_not_treated_as_fresh(self):
         from agents.alert_parser import age_days, score
         self.assertIsNone(age_days({"posted": None, "first_seen": None}))
