@@ -9,8 +9,9 @@ placeholder data. An empty panel is honest; a fake populated one isn't.
 
 ## Status
 - [x] design doc
-- [ ] `news_agent.py` — written, not yet judged. Run it, read the summaries.
-- [ ] email agent — Claude Code subagent over Gmail MCP
+- [x] `news_agent.py` — stdlib only, no API key, writes `news.json`
+- [x] email agent — Gmail MCP + [`config/email_rules.md`](config/email_rules.md)
+- [ ] job-alert miner — parse listings out of digests (step 3b)
 - [ ] portal — static page + `jarvis` launcher
 - [ ] use it for a week, fix what's annoying
 - [ ] linkedin content agent (draft-only)
@@ -20,11 +21,13 @@ placeholder data. An empty panel is honest; a fake populated one isn't.
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env   # then fill in ANTHROPIC_API_KEY
 ```
+No dependencies — everything is stdlib or runs as a Claude Code subagent.
+No `.env` needed; nothing here calls the metered API.
 
-## Running an agent standalone
+## Running
 ```bash
-python agents/news_agent.py
+python agents/news_agent.py     # → output/YYYY-MM-DD/news.json
 ```
+The email agent runs as a Claude Code subagent (needs the Gmail connector
+authenticated via `/mcp`) and writes `output/YYYY-MM-DD/email.json`.
