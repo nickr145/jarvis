@@ -33,15 +33,23 @@ approach or a broadcast, classify it here rather than as `job_alert`.
 Over-surfacing is the correct error **here**. Do not filter for quality —
 that's what `priority` is for.
 
-Takes precedence over `needs_reply`: a recruiter asking "are you interested?"
-is a `job_opportunity`, not a reply obligation.
+A recruiter asking "are you interested?" is a `job_opportunity` **and** sets
+`needs_response: true` — see below. Category and actionability are separate
+questions.
 
 ### 2. `job_alert`
 
 Automated digests from job boards, alert services and talent communities —
 LinkedIn job alerts, Indeed alerts, Haystack, company talent-community
-mailers. Sender is a no-reply address belonging to a job platform; the
-content is a listing feed rather than an approach.
+mailers. The content is a listing feed rather than an approach.
+
+**Judge by content, not sender domain.** A real recruiter frequently writes
+through an ATS: `TD@myworkday.com` sent *"I am happy to let you know that you
+have been selected for an interview… could you please let me know a good time
+to connect"* — a human, writing personally, from a platform address. A
+domain-based rule files that as an alert and loses the most important email in
+the inbox. Ask instead: is this addressed to this person about their situation,
+or is it a list of openings sent to everyone who subscribed?
 
 **These are a subscription, not an opportunity.** The user signed up for them,
 they arrive constantly, and against a real inbox they outnumber everything
@@ -57,6 +65,10 @@ background could be a great match for this Strategy Analyst role"* is a
 a person. If it matches keywords it will surface on priority anyway.
 
 ### 3. `needs_reply`
+
+For human mail that needs an answer and is **not** job-related. Job mail
+needing an answer stays `job_opportunity` with `needs_response: true`, so the
+jobs panel keeps its context and the reply signal is not lost.
 
 **Tuned for precision — this panel is only useful if it stays short.**
 
@@ -85,16 +97,46 @@ Everything else. Automated but not subscribed — receipts, order confirmations,
 security alerts, calendar invites, CI notifications, GitHub mail. Also human
 mail needing no response.
 
+## `needs_response`
+
+A boolean, set independently of category. **This is the actionability signal,
+and it is what the brief's "Needs you" panel keys off.** Category says what a
+message is; this says whether the user owes anything.
+
+Set `true` when the message asks a question, requests information, proposes a
+time, or otherwise cannot be left alone without something breaking.
+
+Set `false` when it is informational: a rejection, an acknowledgement, a
+receipt, a listing feed, a newsletter. Most mail is `false`.
+
+**Thread state overrides content.** If the newest message in the thread was
+sent by the user, nothing is owed — `needs_response: false`, whatever the
+text says. A question already answered is not an open question.
+
+Worked examples from real threads:
+
+| Message | Category | `needs_response` |
+|---|---|---|
+| *"Could you please let me know a good time to connect… Tuesday between 9am and 4pm"* | `job_opportunity` | **true** — explicit request, dated |
+| *"Thanks Nicholas, I have sent you a meeting request. See you then!"* | `fyi` | false — acknowledgement, nothing owed |
+| *"…we've decided to move forward with other candidates"* | `job_opportunity` | false — rejection, informational |
+| *"I'd like to invite you to an in-person interview"* | `job_opportunity` | **true** — needs confirmation |
+
 ## Priority
 
 `high` or `normal`. Most things are `normal`; `high` is for what would be
 genuinely bad to see a day late.
 
+Priority tracks **urgency, not personalization.** A person-written email that
+asks nothing is not high. Getting this wrong makes everything high, which
+makes nothing high.
+
 Mark `high` when:
+- `needs_response` is `true` **and** there is a date, deadline, or proposed
+  time attached
+- A `job_opportunity` carries an interview time, an offer, or a deadline
 - A `job_opportunity` names a **specific role** matching the user's
-  `job_keywords` from `config/profile.json`, or is clearly written by a person
-  rather than generated
-- A `job_opportunity` carries a deadline or an interview time
+  `job_keywords` from `config/profile.json` and invites a response
 - A `job_alert` names a role matching `job_keywords`. **A high-priority
   `job_alert` is listed individually in the brief rather than collapsed into
   the count** — this is the mechanism that keeps recall without flooding.
@@ -141,6 +183,7 @@ note can't explain the call, the call was probably wrong.
       "subject": "...",
       "date": "ISO-8601 with offset",
       "priority": "high | normal",
+      "needs_response": true,
       "note": "why it was classified this way"
     }
   ]
