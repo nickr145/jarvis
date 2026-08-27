@@ -4,9 +4,10 @@
 product — a dashboard the user reads while in a task, not a page that sells anything.
 
 ## Platform
-web — laptop-first. Launched by typing `jarvis` in a terminal, which opens a
-browser. Responsive down to phone, but the desktop read is the one being
-designed for.
+web
+
+Laptop-first. Launched by typing `jarvis` in a terminal, which opens a browser.
+Responsive down to phone, but the desktop read is the one being designed for.
 
 ## Users
 One person: the owner of the repo. A recent CS + business graduate job-hunting

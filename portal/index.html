@@ -83,9 +83,9 @@ a.row:hover,a.row:focus-visible{background:var(--surface);padding-left:var(--s3)
 a.row:focus-visible{box-shadow:inset 2px 0 0 var(--accent)}
 .row:last-child{border-bottom:0}
 .row-top{display:flex;gap:var(--s3);align-items:baseline;flex-wrap:wrap}
-.row-title{font-weight:500;line-height:1.4}
+.row-title{font-weight:500;line-height:1.4;overflow-wrap:anywhere}
 .row-sub{font-family:var(--mono);font-size:.75rem;color:var(--ink-faint);
-  margin-top:var(--s1)}
+  margin-top:var(--s1);overflow-wrap:anywhere}
 .row-note{font-size:.8125rem;color:var(--ink-dim);margin-top:var(--s1)}
 
 .tag{font-family:var(--mono);font-size:.6875rem;letter-spacing:.1em;
@@ -98,7 +98,7 @@ a.row:focus-visible{box-shadow:inset 2px 0 0 var(--accent)}
 .state.empty{color:var(--ink-dim)}
 .state.empty em{color:var(--ink-faint);font-style:normal}
 .state.failed{color:var(--alert)}
-.state.blocked{color:var(--dead)}
+.state.blocked{color:var(--ink-dim)}
 .state code{font-family:var(--mono);font-size:.8125rem;
   color:var(--ink-faint);word-break:break-word}
 
@@ -241,9 +241,11 @@ function newsBlock(cat){
     box.append(el('p','state empty','No items returned.')); return box;
   }
   cat.items.forEach(i => {
-    const a = el('a','row'); a.href = i.url; a.target = '_blank'; a.rel='noopener';
-    a.append(el('div','row-title', i.headline));
-    a.append(el('div','row-sub', `${i.source} · ${fmtTime(i.published)}`));
+    const a = i.url ? el('a','row') : el('div','row');
+    if (i.url){ a.href = i.url; a.target = '_blank'; a.rel = 'noopener'; }
+    a.append(el('div','row-title', i.headline || '(no headline)'));
+    a.append(el('div','row-sub',
+      [i.source, fmtTime(i.published)].filter(Boolean).join(' · ')));
     box.append(a);
   });
   return box;
@@ -274,7 +276,7 @@ const ROLES = [
   ['intern',    /intern|co.?op/i],
   ['remote',    /\bremote\b/i],
   ['swe',       /software (engineer|developer)|\bdeveloper\b/i],
-  ['data/ml',   /data (engineer|analyst|scientist)|machine learning|\bai engineer\b/i],
+  ['data/ml',   /\bdata\b.{0,24}\b(engineer|analyst|scientist)\b|\b(engineer|analyst|scientist)\b.{0,24}\bdata\b|machine learning|\bai engineer\b/i],
 ];
 
 function breakdown(jobItems){
@@ -316,35 +318,48 @@ function breakdown(jobItems){
   const hot     = alerts.filter(i => i.priority === 'high');
   const news_n  = news ? (news.categories||[]).reduce((a,c)=>a+(c.items||[]).length,0) : 0;
 
+  /* Opportunities are rare and always shown. Board alerts are capped — the
+     panel is bounded by a cap, not by a filter, so tuning keywords can never
+     make it unreadably long. Computed before the strip so the strip and the
+     panel report the same number rather than two different slices. */
+  const ALERT_CAP = 6;
+  const shown  = opps.concat(hot.slice(0, ALERT_CAP));
+  const jobMail = opps.length + alerts.length;
+  const hidden = jobMail - shown.length;
+
+  /* `surfaced` is what the Jobs panel actually lists; `job mail` is everything
+     that arrived. They are a subset and its total, not two sibling metrics —
+     the labels have to say so or the two numbers look unreconciled. */
   readout([
     ['needs you',  needs.length,   true],
     ['waiting',    waiting.length, true],
-    ['jobs',       opps.length + hot.length, false],
-    ['alerts',     alerts.length,  false],
+    ['surfaced',   shown.length,   false],
+    ['job mail',   jobMail,        false],
     ['headlines',  news_n,         false],
   ]);
   breakdown(opps.concat(alerts));
 
+  /* When no agent has ever run there is nothing to be empty *about*. Saying
+     "nothing owed" would assert a fact no file supports. */
+  const noRun = !date;
+  const nothingRan = {lead:'No agent output yet.',
+    detail:'Run ./jarvis or an agent directly; this panel reports what a run found.'};
+
   setPanel('#p-needs', {items:needs, render:mailRow, error:mailErr,
-    empty:{lead:'Nothing owed.', detail:'No one has asked you anything in this window.'}});
+    empty: noRun ? nothingRan
+      : {lead:'Nothing owed.', detail:'No one has asked you anything in this window.'}});
 
   setPanel('#p-waiting', {items:waiting, render:mailRow, error:mailErr,
-    empty:{lead:'No open questions of yours.',
-           detail:'Threads where you replied last and got an answer are not counted here.'}});
-
-  /* Opportunities are rare and always shown. Board alerts are capped — the
-     panel is bounded by a cap, not by a filter, so tuning keywords can never
-     make it unreadably long. */
-  const ALERT_CAP = 6;
-  const shown = opps.concat(hot.slice(0, ALERT_CAP));
-  const hidden = (opps.length + alerts.length) - shown.length;
+    empty: noRun ? nothingRan
+      : {lead:'No open questions of yours.',
+         detail:'Threads where you replied last and got an answer are not counted here.'}});
 
   setPanel('#p-jobs', {
     items: shown, render: mailRow, error: mailErr,
-    count: hidden > 0 ? `${shown.length} of ${opps.length + alerts.length}`
-                      : String(shown.length),
-    empty:{lead:'No job mail in this window.',
-           detail:'Board digests, if any, are counted in the strip above.'}});
+    count: hidden > 0 ? `${shown.length} of ${jobMail}` : String(shown.length),
+    empty: noRun ? nothingRan
+      : {lead:'No job mail in this window.',
+         detail:'Board digests, if any, are counted in the strip above.'}});
 
   if (shown.length && hidden > 0){
     const p = el('p','state empty');
@@ -357,7 +372,10 @@ function breakdown(jobItems){
   setPanel('#p-news', {items:cats.length?[1]:[], render:()=>{
       const g = el('div','cats'); cats.forEach(c => g.append(newsBlock(c))); return g;
     }, error:newsErr, count:news_n,
-    empty:{lead:'No news file for this date.', detail:'Run agents/news_agent.py.'}});
+    empty: news
+      ? {lead:'The news agent ran and returned nothing.',
+         detail:'Not the same as a missing file — every feed came back empty.'}
+      : {lead:'No news file for this date.', detail:'Run agents/news_agent.py.'}});
 
   const bits = [];
   if (mail){ bits.push(`email.json · ${items.length} threads · window from ${mail.window_start||'?'}`);
