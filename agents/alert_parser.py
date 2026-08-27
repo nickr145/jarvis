@@ -104,8 +104,94 @@ def parse_linkedin(body: str, received: str | None = None,
     return listings
 
 
+# ---------------------------------------------------------------- Indeed ---
+
+_INDEED_JK = re.compile(r"indeed\.com/rc/clk/dl\?jk(.)([0-9a-f]{14})")
+_INDEED_AGE = re.compile(r"^(just posted|active \d|\d+\+? (minute|hour|day|week|month)s? ago)$", re.I)
+_INDEED_SALARY = re.compile(r"^(from |up to )?[$€£]|a (year|month|week|hour)$", re.I)
+_INDEED_CHROME = re.compile(
+    r"^(indeed job alert|jobs \d+-\d+|see matching results|do not share|this email contains"
+    r"|salaries estimated|©|privacy policy|terms|help centre|manage job alerts"
+    r"|unsubscribe|easily apply|\d+ new .* opportunit)", re.I)
+
+
+def _indeed_job_id(marker: str, rest: str) -> str | None:
+    """Recover the job key mangled by quoted-printable decoding.
+
+    Indeed's links carry `jk=<16 hex chars>`. The first two hex digits always
+    form a valid QP escape, so a decoder turns `=10` into `\x10` and `=40` into
+    `@`, leaving a 15-character field that looks corrupt. Reversing the byte
+    back to its two hex digits restores the real key. Anything that does not
+    come back as 16 hex characters is treated as unreadable, not patched up.
+    """
+    try:
+        head = f"{ord(marker):02x}"
+    except TypeError:
+        return None
+    jid = head + rest
+    return jid if re.fullmatch(r"[0-9a-f]{16}", jid) else None
+
+
+def parse_indeed(body: str, received: str | None = None,
+                 unreadable: list | None = None) -> list[dict]:
+    """Indeed lays a listing out as title / "Company - Location" / optional
+    salary / description / age / link, with blank lines between listings and
+    no separator rules."""
+    listings: list[dict] = []
+    unreadable = unreadable if unreadable is not None else []
+
+    for block in re.split(r"\n\s*\n", body):
+        lines = [ln.strip() for ln in block.splitlines() if ln.strip()]
+        if len(lines) < 3:
+            continue
+
+        link = next((ln for ln in lines if "indeed.com" in ln and ln.startswith("http")), None)
+        if not link:
+            continue
+
+        m = _INDEED_JK.search(link)
+        if not m:
+            # /pagead/ sponsored slots carry no job key, so nothing can dedupe
+            # them. Counted, never invented.
+            if "/pagead/" in link:
+                unreadable.append(link[:60])
+            continue
+
+        job_id = _indeed_job_id(m.group(1), m.group(2))
+        if not job_id:
+            unreadable.append(link[:60])
+            continue
+
+        content = [ln for ln in lines
+                   if not _INDEED_CHROME.match(ln) and not ln.startswith("http")]
+        if len(content) < 2:
+            unreadable.append(job_id)
+            continue
+
+        title, coloc = content[0], content[1]
+        if " - " not in coloc:
+            unreadable.append(job_id)  # cannot split company from location
+            continue
+        company, location = [x.strip() for x in coloc.rsplit(" - ", 1)]
+
+        salary = next((ln for ln in content[2:] if _INDEED_SALARY.search(ln)), None)
+
+        listings.append({
+            "title": title,
+            "company": company,
+            "location": location,
+            "url": f"https://ca.indeed.com/viewjob?jk={job_id}",
+            "job_id": job_id,
+            "source": "indeed",
+            "salary": salary,
+            "first_seen": received,
+        })
+    return listings
+
+
 _PARSERS = {
     "linkedin.com": parse_linkedin,
+    "indeed.com": parse_indeed,
 }
 
 

@@ -112,5 +112,53 @@ class FacetTemplateTests(unittest.TestCase):
         self.assertIn(("FGF Brands", "AI Engineer - New Grad"), got)
 
 
+class IndeedTests(unittest.TestCase):
+    """Indeed's layout shares nothing with LinkedIn's, and its job keys arrive
+    mangled by quoted-printable decoding."""
+
+    def indeed(self):
+        from agents.alert_parser import parse_report
+        return parse_report((FIXTURES / "indeed_digest.txt").read_text(),
+                            "donotreply@jobalert.indeed.com")
+
+    def test_reads_every_listing_in_the_fixture(self):
+        self.assertEqual(len(self.indeed()["listings"]), 6)
+
+    def test_company_and_location_split_on_the_last_dash(self):
+        # The title itself contains " - "; only the second line may be split.
+        row = next(x for x in self.indeed()["listings"]
+                   if x["title"].startswith("2027 Winter - ECCO"))
+        self.assertEqual(row["company"], "Royal Bank of Canada")
+        self.assertEqual(row["location"], "Toronto, ON")
+
+    def test_mangled_job_key_is_reconstructed(self):
+        row = next(x for x in self.indeed()["listings"]
+                   if x["title"].startswith("2027 Winter - ECCO"))
+        # "=10" was decoded to \x10 in transit; the real key starts "10".
+        self.assertEqual(row["job_id"], "10762b9150fc2b52")
+        self.assertEqual(row["url"], "https://ca.indeed.com/viewjob?jk=10762b9150fc2b52")
+
+    def test_every_job_id_is_sixteen_hex_chars(self):
+        import re as _re
+        for x in self.indeed()["listings"]:
+            self.assertRegex(x["job_id"], r"^[0-9a-f]{16}$")
+
+    def test_salary_is_read_when_present_and_absent_otherwise(self):
+        rows = {x["company"]: x for x in self.indeed()["listings"]}
+        self.assertEqual(rows["BMO Financial Group"]["salary"], "$45,500\u2013$84,500 a year")
+        self.assertIsNone(rows["Scotiabank"]["salary"])
+
+    def test_sponsored_ad_without_a_job_key_is_counted_not_invented(self):
+        r = self.indeed()
+        titles = [x["title"] for x in r["listings"]]
+        self.assertNotIn("Night Building Assistant", titles)
+        self.assertEqual(r["unreadable"], 1)
+
+    def test_header_and_footer_are_not_listings(self):
+        titles = [x["title"] for x in self.indeed()["listings"]]
+        for junk in ("Indeed Job Alert", "Do not share this email", "Jobs 1-16 of 16 new jobs"):
+            self.assertNotIn(junk, titles)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
