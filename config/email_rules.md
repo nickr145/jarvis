@@ -296,6 +296,8 @@ note can't explain the call, the call was probably wrong.
       "sender": "Display Name <address>",
       "subject": "...",
       "date": "ISO-8601 with offset",
+      "thread_id": "gmail thread id",
+      "url": "https://mail.google.com/mail/u/0/#inbox/<thread_id>",
       "priority": "high | normal",
       "needs_response": true,
       "awaiting_reply": false,
@@ -304,6 +306,31 @@ note can't explain the call, the call was probably wrong.
   ]
 }
 ```
+
+`thread_id` is carried so every row in the portal is clickable and so
+application state can be resolved across threads. `url` is derived from it.
+
+### `listings.json`
+
+The miner writes its own file next to `email.json`:
+
+```json
+{
+  "generated_at": "ISO-8601 with offset",
+  "coverage": "N of M job_alert emails parsed",
+  "unreadable": 0,
+  "listings": [
+    {"title": "...", "company": "...", "location": "...", "url": "...",
+     "job_id": "...", "source": "linkedin | indeed", "salary": null,
+     "first_seen": "ISO-8601"}
+  ]
+}
+```
+
+`coverage` and `unreadable` are not optional. A run that parsed 3 of 41 emails
+must say so; presenting a partial harvest as the whole picture is the failure
+this project exists to avoid, and it is easiest to commit here — the listings
+themselves all look real.
 
 On failure — auth expired, API unreachable — write `items: []` plus an
 `error` string. The portal renders that as a failed panel. **Never write a
