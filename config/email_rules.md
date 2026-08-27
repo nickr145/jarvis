@@ -75,8 +75,15 @@ they arrive constantly, and against a real inbox they outnumber everything
 else roughly two to one. They collapse to a count line in the brief the same
 way newsletters do.
 
-Keyword matches inside this category still surface individually — see
-Priority. That's what preserves recall without flooding the panel.
+**Do not classify a digest by its subject line.** The subject names one
+listing and hides the rest: *"LinkedIn - Staff Applied Scientist, Trust and
+more"* contained six jobs. Across a two-day window there were ~23 alert
+emails carrying ~140 listings, against 23 subject lines — subject-only
+reading loses roughly five sixths of the content, including the roles most
+likely to be relevant.
+
+Job alerts are therefore **mined, not read**: extract the individual listings
+and rank those. See "Mining job alerts" below.
 
 Gray area, decided: `match.indeed.com` mail that opens *"Hi Nicholas, your
 background could be a great match for this Strategy Analyst role"* is a
@@ -179,6 +186,48 @@ Mark `high` when:
   already not answered
 
 Everything else is `normal`.
+
+## Mining job alerts
+
+Each `job_alert` body is parsed into individual listings, and the listings —
+not the emails — are what gets ranked and shown.
+
+LinkedIn digests are regular in `PLAIN_TEXT`: title, company and location on
+consecutive lines, blocks separated by a dash rule, each with a
+`jobs/view/<id>/` URL. Strip the tracking query strings first; they are ~1KB
+per link and carry nothing. Indeed and Jobright use different layouts and need
+their own parsers — write one per source, and skip sources that have none
+rather than guessing.
+
+Extracted listing:
+
+```json
+{"title": "...", "company": "...", "location": "...",
+ "url": "...", "source": "linkedin | indeed | jobright",
+ "job_id": "4458252621", "first_seen": "ISO-8601"}
+```
+
+**Dedupe on `job_id`**, not on title. The same posting arrives many times
+across many digests — LinkedIn sent one TD listing five times in a single
+thread — and the numeric ID is stable where subject text is not.
+
+### Ranking listings
+
+Rank, then cap. Filtering by keyword alone does not work here: the user
+receives a software-engineering feed, so role keywords match roughly half of
+everything and cannot shrink the list.
+
+Signals, strongest first:
+1. Personally addressed ("your background could be a great match for…")
+2. Location is Canada or remote — a keyword match in Mexico or Mountain View
+   is not a match
+3. Level fits: new grad, intern, co-op, entry, junior, associate — **not**
+   staff, principal, director, or VP
+4. Role keywords from `config/profile.json`
+5. Salary disclosed
+
+Show the top few; collapse the rest to a count. The cap is what bounds the
+panel, not the filter.
 
 ## Deduplication
 
