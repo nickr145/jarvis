@@ -13,6 +13,7 @@ placeholder data. An empty panel is honest; a fake populated one isn't.
 - [x] email agent — Gmail MCP + [`config/email_rules.md`](config/email_rules.md)
 - [x] job-alert miner — parse listings out of digests (LinkedIn + Indeed)
 - [x] portal — static page + `jarvis` launcher
+- [x] ATS poller — Workday boards, `agents/ats_poll.py` (step 3c)
 - [ ] use it for a week, fix what's annoying
 - [ ] linkedin content agent (draft-only)
 - [ ] voice
@@ -40,5 +41,7 @@ needs the Gmail connector authenticated via `/mcp`). It writes
 `output/YYYY-MM-DD/email.json` and `listings.json`.
 
 ```bash
-python3 tests/test_alert_parser.py    # parser tests, stdlib only
+python3 agents/ats_poll.py         # poll employer boards → listings_ats.json
+python3 agents/build_listings.py   # merge every source → listings.json
+python3 tests/test_alert_parser.py && python3 tests/test_workday.py
 ```

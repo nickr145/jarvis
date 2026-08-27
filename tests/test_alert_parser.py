@@ -4,6 +4,7 @@ Fixtures are real message bodies, trimmed only of tracking-parameter tails.
 The parser must never invent a field: a listing it cannot read is a listing
 it must skip, not one it guesses at.
 """
+import pathlib
 import sys
 import unittest
 from pathlib import Path
@@ -199,6 +200,89 @@ class RecencyTests(unittest.TestCase):
         b = {"title": "Junior Software Engineer", "location": "Toronto",
              "company": "B", "posted": "30 days ago"}
         self.assertEqual(rank([b, a], ["software engineer"], today="2026-08-27")[0]["company"], "A")
+
+
+class CrossSourceTests(unittest.TestCase):
+    """One role arriving from several sources must appear once — without ever
+    merging two roles that are merely similar."""
+
+    def idx(self):
+        import json
+        from agents.alert_parser import build_alias_index
+        cfg = json.loads(pathlib.Path("config/ats_sources.json").read_text())
+        return build_alias_index(cfg["tenants"])
+
+    def test_same_role_from_linkedin_and_workday_collapses_once(self):
+        from agents.alert_parser import collapse_across_sources
+        rows = [
+            {"title": "Associate Software Engineer", "company": "Royal Bank of Canada",
+             "source": "linkedin", "job_id": "1", "url": "li", "first_seen": "2026-08-26"},
+            {"title": "Associate Software Engineer", "company": "RBC",
+             "source": "workday:rbc", "job_id": "R-1", "url": "wd", "first_seen": "2026-08-27"},
+        ]
+        out = collapse_across_sources(rows, self.idx())
+        self.assertEqual(len(out), 1)
+        # the employer's own posting is canonical
+        self.assertEqual(out[0]["url"], "wd")
+        self.assertEqual(out[0]["also_on"], ["linkedin"])
+        # earliest sighting survives
+        self.assertEqual(out[0]["first_seen"], "2026-08-26")
+
+    def test_punctuation_and_case_differences_still_collapse(self):
+        from agents.alert_parser import collapse_across_sources
+        rows = [{"title": "Software Engineer, New Grad (2027 Start)", "company": "Zip",
+                 "source": "linkedin", "job_id": "1"},
+                {"title": "software engineer - new grad 2027 start", "company": "Zip",
+                 "source": "workday:zip", "job_id": "2"}]
+        self.assertEqual(len(collapse_across_sources(rows, self.idx())), 1)
+
+    def test_similar_but_different_titles_do_not_merge(self):
+        """A wrong merge hides a real job; a missed merge only shows a
+        duplicate. The conservative error is the correct one."""
+        from agents.alert_parser import collapse_across_sources
+        rows = [{"title": "Lead Full Stack Developer", "company": "RBC",
+                 "source": "workday:rbc", "job_id": "R-1"},
+                {"title": "Lead Full Stack Developer - Python", "company": "RBC",
+                 "source": "workday:rbc", "job_id": "R-2"}]
+        self.assertEqual(len(collapse_across_sources(rows, self.idx())), 2)
+
+    def test_same_title_at_different_employers_does_not_merge(self):
+        from agents.alert_parser import collapse_across_sources
+        rows = [{"title": "Junior Software Engineer", "company": "Scotiabank",
+                 "source": "linkedin", "job_id": "1"},
+                {"title": "Junior Software Engineer", "company": "BMO",
+                 "source": "linkedin", "job_id": "2"}]
+        self.assertEqual(len(collapse_across_sources(rows, self.idx())), 2)
+
+    def test_same_title_within_one_source_is_never_merged(self):
+        """RBC posts five separate 'Senior Data Engineer' requisitions. They
+        share a title and differ only by req id; merging them would delete
+        four real jobs."""
+        from agents.alert_parser import collapse_across_sources
+        rows = [{"title": "Senior Data Engineer", "company": "RBC",
+                 "source": "workday:rbc", "job_id": f"R-{i}"} for i in range(5)]
+        self.assertEqual(len(collapse_across_sources(rows, self.idx())), 5)
+
+    def test_ambiguous_cross_source_match_is_left_alone(self):
+        """Two same-title postings at one employer plus one from elsewhere:
+        which pairs with which is unknowable, so nothing is merged."""
+        from agents.alert_parser import collapse_across_sources
+        rows = [{"title": "Lead Platform Engineer", "company": "RBC",
+                 "source": "workday:rbc", "job_id": "R-1"},
+                {"title": "Lead Platform Engineer", "company": "RBC",
+                 "source": "workday:rbc", "job_id": "R-2"},
+                {"title": "Lead Platform Engineer", "company": "Royal Bank of Canada",
+                 "source": "linkedin", "job_id": "L-1"}]
+        self.assertEqual(len(collapse_across_sources(rows, self.idx())), 3)
+
+    def test_unlisted_alias_fails_safe_as_a_duplicate(self):
+        from agents.alert_parser import collapse_across_sources
+        rows = [{"title": "Data Analyst", "company": "Some Bank Nobody Listed",
+                 "source": "linkedin", "job_id": "1"},
+                {"title": "Data Analyst", "company": "SBNL",
+                 "source": "workday:sbnl", "job_id": "2"}]
+        # visible duplicate, not a silent merge
+        self.assertEqual(len(collapse_across_sources(rows, self.idx())), 2)
 
 
 if __name__ == "__main__":

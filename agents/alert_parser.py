@@ -272,6 +272,97 @@ def age_days(listing: dict, today: str | None = None) -> float | None:
     return None
 
 
+_TITLE_NOISE = re.compile(r"[^a-z0-9 ]+")
+_COMPANY_NOISE = re.compile(
+    r"\b(inc|ltd|llp|llc|corp|corporation|company|co|group|the)\b", re.I)
+
+# Which record survives when one role is seen through several sources. The
+# employer's own board wins: it is canonical, it links straight to the
+# application, and its posted date is authoritative.
+SOURCE_RANK = ("workday", "linkedin", "indeed")
+
+
+def _norm_title(t: str) -> str:
+    return " ".join(_TITLE_NOISE.sub(" ", (t or "").lower()).split())
+
+
+def _norm_company(name: str, aliases: dict[str, str] | None = None) -> str:
+    n = " ".join(_COMPANY_NOISE.sub(" ", (name or "").lower()).split())
+    n = " ".join(_TITLE_NOISE.sub(" ", n).split())
+    if aliases and n in aliases:
+        return aliases[n]
+    return n
+
+
+def build_alias_index(tenants: Iterable[dict]) -> dict[str, str]:
+    """Map every known spelling of an employer to one canonical key.
+
+    Explicit, never inferred. Merging two names that are not the same employer
+    would hide a real job; failing to merge two that are only shows a duplicate.
+    The second error is the safe one, so unlisted spellings simply do not merge.
+    """
+    idx: dict[str, str] = {}
+    for t in tenants:
+        canon = _norm_company(t.get("company", ""))
+        for a in [t.get("company", "")] + list(t.get("aliases") or []):
+            idx[_norm_company(a)] = canon
+    return idx
+
+
+def collapse_across_sources(listings: Iterable[dict],
+                            aliases: dict[str, str] | None = None) -> list[dict]:
+    """Collapse one role seen through several sources into a single row.
+
+    Matches on normalised company plus normalised title, **exactly** — no fuzzy
+    comparison. "Lead Full Stack Developer" and "Lead Full Stack Developer -
+    Python" stay separate, because they might genuinely be two postings and a
+    wrong merge removes a real job from the brief.
+
+    The surviving row keeps the canonical source's link, the earliest sighting,
+    and an `also_on` list so the provenance of the merge is visible.
+    """
+    def prio(x):
+        src = (x.get("source") or "").split(":")[0]
+        return SOURCE_RANK.index(src) if src in SOURCE_RANK else len(SOURCE_RANK)
+
+    groups: dict[tuple[str, str], list[dict]] = {}
+    for x in listings:
+        key = (_norm_company(x.get("company", ""), aliases),
+               _norm_title(x.get("title", "")))
+        groups.setdefault(key, []).append(x)
+
+    out = []
+    for rows in groups.values():
+        if len(rows) == 1:
+            out.append(rows[0])
+            continue
+
+        # Within one source, job_id is authoritative and same-title rows are
+        # genuinely different openings. RBC's board carries five separate
+        # "Senior Data Engineer" requisitions; merging them on title would
+        # delete four real jobs from the brief.
+        by_source: dict[str, list[dict]] = {}
+        for r in rows:
+            by_source.setdefault((r.get("source") or "").split(":")[0], []).append(r)
+
+        if len(by_source) == 1 or any(len(v) > 1 for v in by_source.values()):
+            # Either all from one source, or a source contributed several rows
+            # with this title — which of them the other source matches is not
+            # knowable. Keep them all; a visible duplicate beats a hidden job.
+            out.extend(rows)
+            continue
+
+        ordered = sorted(rows, key=prio)
+        keep = dict(ordered[0])
+        keep["also_on"] = sorted({(r.get("source") or "").split(":")[0]
+                                  for r in ordered[1:]})
+        seens = [r.get("first_seen") for r in ordered if r.get("first_seen")]
+        if seens:
+            keep["first_seen"] = min(seens)
+        out.append(keep)
+    return out
+
+
 def score(listing: dict, keywords: Iterable[str], home: str = "ON",
           today: str | None = None) -> int:
     """Location and seniority outrank keywords.

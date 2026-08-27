@@ -238,8 +238,11 @@ function listingRow(x){
   top.append(el('span','row-title', x.title || '(no title)'));
   if (x.salary) top.append(el('span','tag', x.salary));
   a.append(top);
+  const src = (x.source || '').split(':')[0];
+  const also = (x.also_on || []).length ? `+${x.also_on.join(',')}` : '';
   a.append(el('div','row-sub',
-    [x.company, x.location, x.source].filter(Boolean).join(' · ')));
+    [x.company, x.location, [src, also].filter(Boolean).join(' ')]
+      .filter(Boolean).join(' · ')));
   return a;
 }
 
@@ -426,6 +429,10 @@ function breakdown(jobItems){
   if (mined){
     bits.push(`listings.json · ${(mined.listings||[]).length} listings · ${mined.coverage||''}`);
     if (mined.caveat) bits.push(mined.caveat);
+    if (mined.collapsed_duplicates != null)
+      bits.push(`${mined.collapsed_duplicates} duplicate(s) collapsed across sources`);
+    if ((mined.sources_missing||[]).length)
+      bits.push(`source not present this run: ${mined.sources_missing.join(', ')}`);
     if ((mined.sources_without_parser||[]).length)
       bits.push(`no parser (counted, not guessed): ${mined.sources_without_parser.join(', ')}`);
   } else bits.push(`listings.json unavailable — ${minedErr}`);
