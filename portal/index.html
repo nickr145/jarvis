@@ -231,6 +231,18 @@ function mailRow(it){
   return a;
 }
 
+function listingRow(x){
+  const a = x.url ? el('a','row') : el('div','row');
+  if (x.url){ a.href = x.url; a.target = '_blank'; a.rel = 'noopener'; }
+  const top = el('div','row-top');
+  top.append(el('span','row-title', x.title || '(no title)'));
+  if (x.salary) top.append(el('span','tag', x.salary));
+  a.append(top);
+  a.append(el('div','row-sub',
+    [x.company, x.location, x.source].filter(Boolean).join(' · ')));
+  return a;
+}
+
 function newsBlock(cat){
   const box = el('div','cat');
   box.append(el('h3', null, cat.category));
@@ -303,11 +315,14 @@ function breakdown(jobItems){
     : `<b>no output</b><br>run an agent first`;
 
   let mail = null, mailErr = errIdx, news = null, newsErr = errIdx;
+  let mined = null, minedErr = errIdx;
   if (date){
     try { mail = await grab(`../output/${date}/email.json`); }
     catch(e){ mailErr = e.message; }
     try { news = await grab(`../output/${date}/news.json`); }
     catch(e){ newsErr = e.message; }
+    try { mined = await grab(`../output/${date}/listings.json`); }
+    catch(e){ minedErr = e.message; }
   }
 
   const items   = (mail && mail.items) || [];
@@ -333,7 +348,7 @@ function breakdown(jobItems){
   readout([
     ['needs you',  needs.length,   true],
     ['waiting',    waiting.length, true],
-    ['surfaced',   shown.length,   false],
+    ['listings',   (mined && mined.listings || []).length, false],
     ['job mail',   jobMail,        false],
     ['headlines',  news_n,         false],
   ]);
@@ -354,17 +369,41 @@ function breakdown(jobItems){
       : {lead:'No open questions of yours.',
          detail:'Threads where you replied last and got an answer are not counted here.'}});
 
-  setPanel('#p-jobs', {
-    items: shown, render: mailRow, error: mailErr,
-    count: hidden > 0 ? `${shown.length} of ${jobMail}` : String(shown.length),
-    empty: noRun ? nothingRan
-      : {lead:'No job mail in this window.',
-         detail:'Board digests, if any, are counted in the strip above.'}});
+  /* Prefer mined listings: a digest's subject names one role and hides the
+     rest, so ranking the subjects ranks the wrong things. Fall back to email
+     rows only when the miner has not run. */
+  const listings = (mined && mined.listings) || [];
+  const LIST_CAP = 8;
 
-  if (shown.length && hidden > 0){
+  if (listings.length){
+    setPanel('#p-jobs', {
+      items: listings.slice(0, LIST_CAP), render: listingRow, error: minedErr,
+      count: `${Math.min(LIST_CAP, listings.length)} of ${listings.length}`,
+      empty:{lead:'No listings parsed.', detail:''}});
+  } else {
+    setPanel('#p-jobs', {
+      items: shown, render: mailRow, error: mailErr,
+      count: hidden > 0 ? `${shown.length} of ${jobMail}` : String(shown.length),
+      empty: noRun ? nothingRan
+        : {lead:'No job mail in this window.',
+           detail:'Board digests, if any, are counted in the strip above.'}});
+  }
+
+  if (listings.length){
+    const p = el('p','state empty');
+    if (listings.length > LIST_CAP)
+      p.append(el('em', null, `+${listings.length - LIST_CAP} more listings, ranked lower. `));
+    /* Coverage is rendered, not buried. A partial harvest presented as the
+       whole picture is the exact failure this project exists to avoid, and
+       listings look real whether or not the harvest was. */
+    if (mined && mined.coverage) p.append(el('em', null, mined.coverage));
+    if (mined && mined.unreadable)
+      p.append(el('em', null, ` ${mined.unreadable} listing(s) could not be read.`));
+    $('#p-jobs .body').append(p);
+  } else if (shown.length && hidden > 0){
     const p = el('p','state empty');
     p.append(el('em', null,
-      `+${hidden} more board alerts, ranked lower. The individual listings inside them aren't parsed yet — that's step 3b.`));
+      `+${hidden} more board alerts, ranked lower. Their listings aren't parsed — the miner hasn't run for this date.`));
     $('#p-jobs .body').append(p);
   }
 
@@ -384,6 +423,12 @@ function breakdown(jobItems){
   else bits.push(`email.json unavailable — ${mailErr}`);
   if (news) bits.push(`news.json · generated ${fmtTime(news.generated_at)}`);
   else bits.push(`news.json unavailable — ${newsErr}`);
+  if (mined){
+    bits.push(`listings.json · ${(mined.listings||[]).length} listings · ${mined.coverage||''}`);
+    if (mined.caveat) bits.push(mined.caveat);
+    if ((mined.sources_without_parser||[]).length)
+      bits.push(`no parser (counted, not guessed): ${mined.sources_without_parser.join(', ')}`);
+  } else bits.push(`listings.json unavailable — ${minedErr}`);
   bits.push('Every figure above is computed from these files at load. Nothing here is authored.');
   $('#foot').replaceChildren(...bits.map(b => el('div', null, b)));
 })();
