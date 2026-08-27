@@ -245,9 +245,8 @@ the right answer.
 3. Email Agent as a Claude Code subagent over Gmail MCP — run against real
    inbox, judge the classifications. Write `email.json`. Job alerts collapse
    to a count.
-3b. **Job-alert miner.** Per-source parsers, listing-level dedup on job ID,
-   ranking by location and seniority. Split out of step 3 because the
-   classifier is useful without it and the parsers are their own problem.
+3b. **Job-alert miner** — done. Per-source parsers, dedup on job ID, ranking by
+   location and seniority above keywords.
 4. **The portal.** Static page + `jarvis` launcher. Two real panels.
 5. Use it every morning for a week. Fix what's annoying.
 6. LinkedIn Content Agent (draft-only), fed by that week's briefs.
