@@ -172,6 +172,12 @@ context, with the instruction to skip what's already covered and prefer
 genuinely new developments. No state file, no id tracking. This handles
 "same story, new angle" — which exact-match id dedupe always gets wrong.
 
+## Pagination
+
+Gmail's `resultCountEstimate` is not usable — for one identical query it
+returned 54, then 201, then 31. Paginate until `nextPageToken` is absent and
+count the threads returned. The real window was 81.
+
 ## Failure behavior
 Panels and sections fail independently. If Gmail auth has expired or the news
 feed times out, the portal still opens with `News unavailable — feed timed
@@ -237,7 +243,11 @@ the right answer.
 1. This doc — done
 2. News Agent — run it, judge the summaries. Write `news.json`.
 3. Email Agent as a Claude Code subagent over Gmail MCP — run against real
-   inbox, judge the classifications. Write `email.json`.
+   inbox, judge the classifications. Write `email.json`. Job alerts collapse
+   to a count.
+3b. **Job-alert miner.** Per-source parsers, listing-level dedup on job ID,
+   ranking by location and seniority. Split out of step 3 because the
+   classifier is useful without it and the parsers are their own problem.
 4. **The portal.** Static page + `jarvis` launcher. Two real panels.
 5. Use it every morning for a week. Fix what's annoying.
 6. LinkedIn Content Agent (draft-only), fed by that week's briefs.
