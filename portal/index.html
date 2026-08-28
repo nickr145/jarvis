@@ -50,6 +50,24 @@ body{
   padding:var(--s3) var(--s4);margin-bottom:var(--s5);font-size:.8125rem;
   color:var(--alert);line-height:1.6}
 .stale code{font-family:var(--mono);font-size:.75rem;color:var(--ink-dim)}
+.controls{display:flex;flex-wrap:wrap;gap:var(--s2);align-items:center;
+  margin-bottom:var(--s5)}
+.btn{font-family:var(--mono);font-size:.75rem;letter-spacing:.06em;
+  text-transform:uppercase;padding:.4rem .7rem;background:transparent;
+  color:var(--ink-dim);border:1px solid var(--line);cursor:pointer;
+  transition:border-color 160ms var(--ease),color 160ms var(--ease)}
+.btn:hover:not(:disabled),.btn:focus-visible{color:var(--accent);
+  border-color:color-mix(in oklch,var(--accent) 55%,transparent);outline:none}
+.btn:disabled{color:var(--dead);cursor:not-allowed}
+.btn[aria-busy="true"]{color:var(--alert);
+  border-color:color-mix(in oklch,var(--alert) 50%,transparent)}
+.btn-note{font-family:var(--mono);font-size:.6875rem;color:var(--ink-faint)}
+.from-older{font-family:var(--mono);font-size:.6875rem;color:var(--alert);
+  margin-left:var(--s2)}
+.pager{display:flex;align-items:center;gap:var(--s3);margin-bottom:var(--s3)}
+.pager .btn{min-width:2.6rem;text-align:center}
+.pager-n{font-family:var(--mono);font-size:.75rem;color:var(--ink-faint);
+  font-variant-numeric:tabular-nums}
 
 /* ---------- readout strip ---------- */
 .readout{border:1px solid var(--line);background:var(--surface);
@@ -142,6 +160,13 @@ a.row:focus-visible{box-shadow:inset 2px 0 0 var(--accent)}
   </header>
   <div class="rule"></div>
 
+  <div class="controls">
+    <button class="btn" id="r-news"     type="button">refresh news</button>
+    <button class="btn" id="r-boards"   type="button">poll boards ~70s</button>
+    <button class="btn" id="r-email"    type="button" disabled>refresh email</button>
+    <span class="btn-note" id="r-status">email needs a Claude Code session — no button here can reach the Gmail connector</span>
+  </div>
+
   <div id="stale" hidden></div>
 
   <section class="readout" aria-label="Summary">
@@ -214,9 +239,12 @@ async function grab(url){
 }
 
 /* Panels own four distinct states. `blocked` is set in markup. */
-function setPanel(id, {items, render, empty, error, count}){
+function setPanel(id, {items, render, empty, error, count, fromDate}){
   const p = $(id), body = p.querySelector('.body');
   const c = p.querySelector('.count');
+  const head = p.querySelector('.panel-head h2');
+  head.querySelectorAll('.from-older').forEach(n => n.remove());
+  if (fromDate) head.append(el('span','from-older', `from ${fromDate}`));
   body.replaceChildren();
   if (error){
     c.textContent = 'failed';
@@ -334,16 +362,27 @@ function breakdown(jobItems){
     ? `<b>${date}</b><br>reading output/${date}/`
     : `<b>no output</b><br>run an agent first`;
 
-  let mail = null, mailErr = errIdx, news = null, newsErr = errIdx;
-  let mined = null, minedErr = errIdx;
-  if (date){
-    try { mail = await grab(`../output/${date}/email.json`); }
-    catch(e){ mailErr = e.message; }
-    try { news = await grab(`../output/${date}/news.json`); }
-    catch(e){ newsErr = e.message; }
-    try { mined = await grab(`../output/${date}/listings.json`); }
-    catch(e){ minedErr = e.message; }
+  /* Each source is looked up newest-date-first rather than only in today's
+     folder. A day always starts with no email.json — that is not a failure,
+     it is yesterday's triage, and it must be labelled with its own date so a
+     stale panel is never mistaken for a quiet morning. */
+  const dates = (idx && idx.dates ? idx.dates.slice() : []).sort().reverse();
+
+  async function newest(file){
+    for (const d of dates){
+      try { return {data: await grab(`../output/${d}/${file}`), date: d}; }
+      catch (e){ /* try the next day back */ }
+    }
+    return {data: null, date: null, error: `no ${file} in any dated output folder`};
   }
+
+  const mailHit = await newest('email.json');
+  const newsHit = await newest('news.json');
+  const minedHit = await newest('listings.json');
+
+  const mail = mailHit.data,  mailErr  = mailHit.data  ? null : (errIdx || mailHit.error);
+  const news = newsHit.data,  newsErr  = newsHit.data  ? null : (errIdx || newsHit.error);
+  const mined = minedHit.data, minedErr = minedHit.data ? null : (errIdx || minedHit.error);
 
   const items   = (mail && mail.items) || [];
   const needs   = items.filter(i => i.needs_response);
@@ -380,11 +419,15 @@ function breakdown(jobItems){
   const nothingRan = {lead:'No agent output yet.',
     detail:'Run ./jarvis or an agent directly; this panel reports what a run found.'};
 
+  const older = (hit) => (hit.date && hit.date !== date) ? hit.date : null;
+
   setPanel('#p-needs', {items:needs, render:mailRow, error:mailErr,
+    fromDate: older(mailHit),
     empty: noRun ? nothingRan
       : {lead:'Nothing owed.', detail:'No one has asked you anything in this window.'}});
 
   setPanel('#p-waiting', {items:waiting, render:mailRow, error:mailErr,
+    fromDate: older(mailHit),
     empty: noRun ? nothingRan
       : {lead:'No open questions of yours.',
          detail:'Threads where you replied last and got an answer are not counted here.'}});
@@ -394,11 +437,18 @@ function breakdown(jobItems){
      rows only when the miner has not run. */
   const listings = (mined && mined.listings) || [];
   const LIST_CAP = 8;
+  /* Eight is the right default for a thirty-second read, but 251 hidden rows
+     is not a brief, it is a hidden pile. Paging keeps the panel one screen
+     tall while making the whole ranked list reachable. */
+  let page = 0;
+  const pages = Math.max(1, Math.ceil(listings.length / LIST_CAP));
 
+  const drawJobs = () => {
   if (listings.length){
     setPanel('#p-jobs', {
-      items: listings.slice(0, LIST_CAP), render: listingRow, error: minedErr,
-      count: `${Math.min(LIST_CAP, listings.length)} of ${listings.length}`,
+        items: listings.slice(page * LIST_CAP, page * LIST_CAP + LIST_CAP),
+      render: listingRow, error: minedErr, fromDate: older(minedHit),
+      count: `${page * LIST_CAP + 1}\u2013${Math.min((page + 1) * LIST_CAP, listings.length)} of ${listings.length}`,
       empty:{lead:'No listings parsed.', detail:''}});
   } else {
     setPanel('#p-jobs', {
@@ -411,12 +461,31 @@ function breakdown(jobItems){
 
   if (listings.length){
     const p = el('p','state empty');
-    if (listings.length > LIST_CAP)
-      p.append(el('em', null, `+${listings.length - LIST_CAP} more listings, ranked lower. `));
+    if (pages > 1){
+      const nav = el('div','pager');
+      const mk = (label, delta, disabled) => {
+        const b = el('button','btn', label); b.type = 'button';
+        b.disabled = disabled;
+        b.setAttribute('aria-label', delta < 0 ? 'previous page of jobs'
+                                               : 'next page of jobs');
+        b.addEventListener('click', () => {
+          page = Math.min(pages - 1, Math.max(0, page + delta)); drawJobs();
+          $('#p-jobs').scrollIntoView({block:'start',
+            behavior: REDUCED ? 'auto' : 'smooth'});
+        });
+        return b;
+      };
+      nav.append(mk('\u2190', -1, page === 0));
+      nav.append(el('span','pager-n', `page ${page + 1} of ${pages}`));
+      nav.append(mk('\u2192', +1, page >= pages - 1));
+      p.append(nav);
+    }
     /* Coverage is rendered, not buried. A partial harvest presented as the
        whole picture is the exact failure this project exists to avoid, and
        listings look real whether or not the harvest was. */
     if (mined && mined.coverage) p.append(el('em', null, mined.coverage));
+    if (mined && mined.provenance_caveat)
+      p.append(el('em', null, ' Not a verbatim parse — see footer.'));
     if (mined && mined.unreadable)
       p.append(el('em', null, ` ${mined.unreadable} listing(s) could not be read.`));
     $('#p-jobs .body').append(p);
@@ -426,11 +495,13 @@ function breakdown(jobItems){
       `+${hidden} more board alerts, ranked lower. Their listings aren't parsed — the miner hasn't run for this date.`));
     $('#p-jobs .body').append(p);
   }
+  };
+  drawJobs();
 
   const cats = (news && news.categories) || [];
   setPanel('#p-news', {items:cats.length?[1]:[], render:()=>{
       const g = el('div','cats'); cats.forEach(c => g.append(newsBlock(c))); return g;
-    }, error:newsErr, count:news_n,
+    }, error:newsErr, count:news_n, fromDate: older(newsHit),
     empty: news
       ? {lead:'The news agent ran and returned nothing.',
          detail:'Not the same as a missing file — every feed came back empty.'}
@@ -454,6 +525,34 @@ function breakdown(jobItems){
     stale.forEach(t => box.append(el('div', null, t)));
   }
 
+  /* Buttons run only what a terminal can run. Email has no button because no
+     button could work: the Gmail connector lives in a Claude Code session. */
+  const wire = (id, action, label) => {
+    const b = $(id);
+    b.addEventListener('click', async () => {
+      b.disabled = true; b.setAttribute('aria-busy','true');
+      const was = b.textContent; b.textContent = 'running…';
+      $('#r-status').textContent = `${label} running…`;
+      try {
+        const r = await fetch(`/api/refresh/${action}`, {method:'POST'});
+        const j = await r.json();
+        $('#r-status').textContent = j.message || (j.ok ? 'done' : 'failed');
+        if (j.ok) return location.reload();
+      } catch (e) {
+        $('#r-status').textContent = `could not reach the launcher — ${e.message}`;
+      }
+      b.disabled = false; b.removeAttribute('aria-busy'); b.textContent = was;
+    });
+  };
+  document.addEventListener('keydown', (e) => {
+    if (e.target !== document.body || !listings.length) return;
+    if (e.key === 'ArrowLeft' && page > 0){ page--; drawJobs(); }
+    else if (e.key === 'ArrowRight' && page < pages - 1){ page++; drawJobs(); }
+  });
+
+  wire('#r-news', 'news', 'news refresh');
+  wire('#r-boards', 'boards', 'board poll');
+
   const bits = [];
   if (mail){ bits.push(`email.json · ${items.length} threads · ${fmtAge(mailAge)} · window from ${mail.window_start||'?'}`);
     if (mail.coverage) bits.push(mail.coverage);
@@ -464,6 +563,7 @@ function breakdown(jobItems){
   if (mined){
     bits.push(`listings.json · ${(mined.listings||[]).length} listings · ${mined.coverage||''}`);
     if (mined.caveat) bits.push(mined.caveat);
+    if (mined.provenance_caveat) bits.push(mined.provenance_caveat);
     if (mined.collapsed_duplicates != null)
       bits.push(`${mined.collapsed_duplicates} duplicate(s) collapsed across sources`);
     if ((mined.sources_missing||[]).length)

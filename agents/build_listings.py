@@ -49,6 +49,16 @@ def main() -> None:
         if src.get("caveat"):
             coverage.append(f"{name}: {src['caveat']}")
 
+    if not rows and len(missing) == 2:
+        # Every source is absent — nothing was merged and nothing is known.
+        # Writing an empty listings.json here would assert "no jobs today",
+        # which is false; the truth is "no source ran today". The portal then
+        # falls back to the newest file that does represent a real run.
+        print("no listing sources present — not writing listings.json")
+        for name in missing:
+            print(f"  MISSING: {name}")
+        return []
+
     before = len(rows)
     rows = dedupe(rows)
     rows = collapse_across_sources(rows, aliases)
