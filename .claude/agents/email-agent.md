@@ -42,7 +42,18 @@ the answer is to report it, not to perform it.
    ```
 
    Write bodies to a temp file rather than passing them as arguments; they
-   contain quotes, newlines and control characters. Then `dedupe` on `job_id`
+   contain quotes, newlines and control characters.
+
+   **Feed the body verbatim. Never condense, summarise, or retype it.** Write
+   exactly what `get_message` returned to the file and pass that file. Parsing
+   a body you rewrote is not parsing the email: whatever you dropped or
+   mistyped becomes invisible, and the output then claims a provenance it does
+   not have. Tracking query strings are long and useless, but the parser
+   already ignores them — stripping them by hand buys nothing and costs the
+   guarantee that a listing came from the source.
+
+   If a body is too large to handle comfortably, say so and skip that message
+   as unreadable. A counted gap is honest; a retyped body is not. Then `dedupe` on `job_id`
    and `rank` with `job_keywords` from `config/profile.json`.
 5. **Write** `output/YYYY-MM-DD/email.json` and `output/YYYY-MM-DD/listings.json`
    in the shapes `config/email_rules.md` specifies.
@@ -56,3 +67,6 @@ not; they are counted, never guessed at).
 
 A partial run reported as complete is the one failure this project cannot
 tolerate. Listings all look real whether or not the harvest was.
+
+State plainly whether every parsed body was fed verbatim. If any was not, that
+belongs in the output file as a provenance caveat, not only in your reply.

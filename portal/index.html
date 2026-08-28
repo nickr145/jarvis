@@ -484,6 +484,8 @@ function breakdown(jobItems){
        whole picture is the exact failure this project exists to avoid, and
        listings look real whether or not the harvest was. */
     if (mined && mined.coverage) p.append(el('em', null, mined.coverage));
+    if (mined && mined.provenance_caveat)
+      p.append(el('em', null, ' Not a verbatim parse — see footer.'));
     if (mined && mined.unreadable)
       p.append(el('em', null, ` ${mined.unreadable} listing(s) could not be read.`));
     $('#p-jobs .body').append(p);
@@ -561,6 +563,7 @@ function breakdown(jobItems){
   if (mined){
     bits.push(`listings.json · ${(mined.listings||[]).length} listings · ${mined.coverage||''}`);
     if (mined.caveat) bits.push(mined.caveat);
+    if (mined.provenance_caveat) bits.push(mined.provenance_caveat);
     if (mined.collapsed_duplicates != null)
       bits.push(`${mined.collapsed_duplicates} duplicate(s) collapsed across sources`);
     if ((mined.sources_missing||[]).length)
