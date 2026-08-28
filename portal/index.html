@@ -64,6 +64,10 @@ body{
 .btn-note{font-family:var(--mono);font-size:.6875rem;color:var(--ink-faint)}
 .from-older{font-family:var(--mono);font-size:.6875rem;color:var(--alert);
   margin-left:var(--s2)}
+.pager{display:flex;align-items:center;gap:var(--s3);margin-bottom:var(--s3)}
+.pager .btn{min-width:2.6rem;text-align:center}
+.pager-n{font-family:var(--mono);font-size:.75rem;color:var(--ink-faint);
+  font-variant-numeric:tabular-nums}
 
 /* ---------- readout strip ---------- */
 .readout{border:1px solid var(--line);background:var(--surface);
@@ -434,15 +438,17 @@ function breakdown(jobItems){
   const listings = (mined && mined.listings) || [];
   const LIST_CAP = 8;
   /* Eight is the right default for a thirty-second read, but 251 hidden rows
-     is not a brief, it is a hidden pile. The rest stay one click away. */
-  let showAll = false;
+     is not a brief, it is a hidden pile. Paging keeps the panel one screen
+     tall while making the whole ranked list reachable. */
+  let page = 0;
+  const pages = Math.max(1, Math.ceil(listings.length / LIST_CAP));
 
   const drawJobs = () => {
   if (listings.length){
     setPanel('#p-jobs', {
-        items: listings.slice(0, showAll ? listings.length : LIST_CAP),
+        items: listings.slice(page * LIST_CAP, page * LIST_CAP + LIST_CAP),
       render: listingRow, error: minedErr, fromDate: older(minedHit),
-      count: `${showAll ? listings.length : Math.min(LIST_CAP, listings.length)} of ${listings.length}`,
+      count: `${page * LIST_CAP + 1}\u2013${Math.min((page + 1) * LIST_CAP, listings.length)} of ${listings.length}`,
       empty:{lead:'No listings parsed.', detail:''}});
   } else {
     setPanel('#p-jobs', {
@@ -455,12 +461,24 @@ function breakdown(jobItems){
 
   if (listings.length){
     const p = el('p','state empty');
-    if (listings.length > LIST_CAP){
-      const b = el('button','btn',
-        showAll ? `show top ${LIST_CAP}` : `show all ${listings.length}`);
-      b.type = 'button';
-      b.addEventListener('click', () => { showAll = !showAll; drawJobs(); });
-      p.append(b); p.append(document.createTextNode(' '));
+    if (pages > 1){
+      const nav = el('div','pager');
+      const mk = (label, delta, disabled) => {
+        const b = el('button','btn', label); b.type = 'button';
+        b.disabled = disabled;
+        b.setAttribute('aria-label', delta < 0 ? 'previous page of jobs'
+                                               : 'next page of jobs');
+        b.addEventListener('click', () => {
+          page = Math.min(pages - 1, Math.max(0, page + delta)); drawJobs();
+          $('#p-jobs').scrollIntoView({block:'start',
+            behavior: REDUCED ? 'auto' : 'smooth'});
+        });
+        return b;
+      };
+      nav.append(mk('\u2190', -1, page === 0));
+      nav.append(el('span','pager-n', `page ${page + 1} of ${pages}`));
+      nav.append(mk('\u2192', +1, page >= pages - 1));
+      p.append(nav);
     }
     /* Coverage is rendered, not buried. A partial harvest presented as the
        whole picture is the exact failure this project exists to avoid, and
@@ -524,6 +542,12 @@ function breakdown(jobItems){
       b.disabled = false; b.removeAttribute('aria-busy'); b.textContent = was;
     });
   };
+  document.addEventListener('keydown', (e) => {
+    if (e.target !== document.body || !listings.length) return;
+    if (e.key === 'ArrowLeft' && page > 0){ page--; drawJobs(); }
+    else if (e.key === 'ArrowRight' && page < pages - 1){ page++; drawJobs(); }
+  });
+
   wire('#r-news', 'news', 'news refresh');
   wire('#r-boards', 'boards', 'board poll');
 
