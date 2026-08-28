@@ -28,10 +28,18 @@ No `.env` needed; nothing here calls the metered API.
 
 ## Running
 ```bash
-./jarvis                 # refresh news, open the portal
-./jarvis --no-refresh    # open whatever is already on disk
-./jarvis --port 8931     # if 8731 is taken
+./jarvis --install       # symlink into ~/.local/bin, then `jarvis` works anywhere
+jarvis                   # refresh news, rebuild listings, open the portal (~2s)
+jarvis --poll            # also poll employer job boards (~70s)
+jarvis --no-refresh      # open whatever is already on disk
+jarvis --port 8931       # if 8731 is taken
 ```
+
+`jarvis` cannot refresh email: the Gmail connector lives in a Claude Code
+session, so a plain terminal can't reach it. It uses whatever `email.json` the
+last Claude Code run left, and the portal shows a banner when that file is more
+than a day old — an empty "Needs you" panel should never be mistaken for
+"nothing arrived" when it means "nobody has looked since Tuesday".
 Or run an agent on its own:
 ```bash
 python agents/news_agent.py     # → output/YYYY-MM-DD/news.json
