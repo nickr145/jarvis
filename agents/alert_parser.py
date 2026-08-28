@@ -99,6 +99,7 @@ def parse_linkedin(body: str, received: str | None = None,
             "url": _clean_linkedin_url(m.group(1)),
             "job_id": m.group(1),
             "source": "linkedin",
+            "posted": None,  # not present in the digest; first_seen is the proxy
             "first_seen": received,
         })
     return listings
@@ -175,6 +176,7 @@ def parse_indeed(body: str, received: str | None = None,
         company, location = [x.strip() for x in coloc.rsplit(" - ", 1)]
 
         salary = next((ln for ln in content[2:] if _INDEED_SALARY.search(ln)), None)
+        posted = next((ln for ln in lines if _INDEED_AGE.match(ln)), None)
 
         listings.append({
             "title": title,
@@ -184,6 +186,7 @@ def parse_indeed(body: str, received: str | None = None,
             "job_id": job_id,
             "source": "indeed",
             "salary": salary,
+            "posted": posted,
             "first_seen": received,
         })
     return listings
@@ -235,7 +238,133 @@ def dedupe(listings: Iterable[dict]) -> list[dict]:
     return list(best.values())
 
 
-def score(listing: dict, keywords: Iterable[str], home: str = "ON") -> int:
+_AGE_DAYS = re.compile(r"^(just posted|active)|^(\d+)\+? *(hour|day|week|month)", re.I)
+
+
+def age_days(listing: dict, today: str | None = None) -> float | None:
+    """Days since posting, from Indeed's age line where present, otherwise from
+    when the email arrived. Returns None when neither is known — an unknown age
+    is not treated as fresh."""
+    posted = (listing.get("posted") or "").strip().lower()
+    if posted:
+        # Sources phrase this differently: Indeed says "Just posted" / "6 days
+        # ago", Workday says "Posted Today" / "Posted 2 Days Ago". Normalise the
+        # prefix so one function understands both rather than each adapter
+        # inventing its own age vocabulary.
+        posted = re.sub(r"^posted +", "", posted)
+        if posted.startswith(("just posted", "active", "today")):
+            return 0.0
+        if posted.startswith("yesterday"):
+            return 1.0
+        m = re.match(r"(\d+)\+? *(hour|day|week|month)", posted)
+        if m:
+            n, unit = int(m.group(1)), m.group(2)
+            return n * {"hour": 1 / 24, "day": 1, "week": 7, "month": 30}[unit]
+    seen, ref = listing.get("first_seen"), today
+    if seen and ref:
+        try:
+            from datetime import date
+            a = date.fromisoformat(seen[:10])
+            b = date.fromisoformat(ref[:10])
+            return float((b - a).days)
+        except ValueError:
+            return None
+    return None
+
+
+_TITLE_NOISE = re.compile(r"[^a-z0-9 ]+")
+_COMPANY_NOISE = re.compile(
+    r"\b(inc|ltd|llp|llc|corp|corporation|company|co|group|the)\b", re.I)
+
+# Which record survives when one role is seen through several sources. The
+# employer's own board wins: it is canonical, it links straight to the
+# application, and its posted date is authoritative.
+SOURCE_RANK = ("workday", "linkedin", "indeed")
+
+
+def _norm_title(t: str) -> str:
+    return " ".join(_TITLE_NOISE.sub(" ", (t or "").lower()).split())
+
+
+def _norm_company(name: str, aliases: dict[str, str] | None = None) -> str:
+    n = " ".join(_COMPANY_NOISE.sub(" ", (name or "").lower()).split())
+    n = " ".join(_TITLE_NOISE.sub(" ", n).split())
+    if aliases and n in aliases:
+        return aliases[n]
+    return n
+
+
+def build_alias_index(tenants: Iterable[dict]) -> dict[str, str]:
+    """Map every known spelling of an employer to one canonical key.
+
+    Explicit, never inferred. Merging two names that are not the same employer
+    would hide a real job; failing to merge two that are only shows a duplicate.
+    The second error is the safe one, so unlisted spellings simply do not merge.
+    """
+    idx: dict[str, str] = {}
+    for t in tenants:
+        canon = _norm_company(t.get("company", ""))
+        for a in [t.get("company", "")] + list(t.get("aliases") or []):
+            idx[_norm_company(a)] = canon
+    return idx
+
+
+def collapse_across_sources(listings: Iterable[dict],
+                            aliases: dict[str, str] | None = None) -> list[dict]:
+    """Collapse one role seen through several sources into a single row.
+
+    Matches on normalised company plus normalised title, **exactly** — no fuzzy
+    comparison. "Lead Full Stack Developer" and "Lead Full Stack Developer -
+    Python" stay separate, because they might genuinely be two postings and a
+    wrong merge removes a real job from the brief.
+
+    The surviving row keeps the canonical source's link, the earliest sighting,
+    and an `also_on` list so the provenance of the merge is visible.
+    """
+    def prio(x):
+        src = (x.get("source") or "").split(":")[0]
+        return SOURCE_RANK.index(src) if src in SOURCE_RANK else len(SOURCE_RANK)
+
+    groups: dict[tuple[str, str], list[dict]] = {}
+    for x in listings:
+        key = (_norm_company(x.get("company", ""), aliases),
+               _norm_title(x.get("title", "")))
+        groups.setdefault(key, []).append(x)
+
+    out = []
+    for rows in groups.values():
+        if len(rows) == 1:
+            out.append(rows[0])
+            continue
+
+        # Within one source, job_id is authoritative and same-title rows are
+        # genuinely different openings. RBC's board carries five separate
+        # "Senior Data Engineer" requisitions; merging them on title would
+        # delete four real jobs from the brief.
+        by_source: dict[str, list[dict]] = {}
+        for r in rows:
+            by_source.setdefault((r.get("source") or "").split(":")[0], []).append(r)
+
+        if len(by_source) == 1 or any(len(v) > 1 for v in by_source.values()):
+            # Either all from one source, or a source contributed several rows
+            # with this title — which of them the other source matches is not
+            # knowable. Keep them all; a visible duplicate beats a hidden job.
+            out.extend(rows)
+            continue
+
+        ordered = sorted(rows, key=prio)
+        keep = dict(ordered[0])
+        keep["also_on"] = sorted({(r.get("source") or "").split(":")[0]
+                                  for r in ordered[1:]})
+        seens = [r.get("first_seen") for r in ordered if r.get("first_seen")]
+        if seens:
+            keep["first_seen"] = min(seens)
+        out.append(keep)
+    return out
+
+
+def score(listing: dict, keywords: Iterable[str], home: str = "ON",
+          today: str | None = None) -> int:
     """Location and seniority outrank keywords.
 
     Keyword matching alone cannot shrink this list: the user receives a
@@ -269,14 +398,21 @@ def score(listing: dict, keywords: Iterable[str], home: str = "ON") -> int:
     if _SALARY.search(blob):
         s += 1
 
+    # Recency. A posting a week old has had a week of applicants, which matters
+    # more for new-grad roles than for senior ones. An unknown age scores 0 —
+    # never the fresh bonus, because we do not know that it is fresh.
+    d = age_days(listing, today)
+    if d is not None:
+        s += 4 if d <= 1 else 3 if d <= 3 else 1 if d <= 7 else -2
+
     return s
 
 
 def rank(listings: Iterable[dict], keywords: Iterable[str],
-         home: str = "ON") -> list[dict]:
+         home: str = "ON", today: str | None = None) -> list[dict]:
     """Rank, then let the caller cap. The panel is bounded by a cap rather than
     a filter, so no amount of keyword mistuning can make it unreadably long."""
     kws = list(keywords)
-    scored = [(score(x, kws, home), i, x) for i, x in enumerate(listings)]
+    scored = [(score(x, kws, home, today), i, x) for i, x in enumerate(listings)]
     scored.sort(key=lambda t: (-t[0], t[1]))
     return [x for _, _, x in scored]

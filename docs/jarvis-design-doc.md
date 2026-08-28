@@ -247,6 +247,8 @@ the right answer.
    to a count.
 3b. **Job-alert miner** — done. Per-source parsers, dedup on job ID, ranking by
    location and seniority above keywords.
+3c. **ATS poller.** Workday adapter first, one tenant end-to-end, then the rest
+   as configuration. SuccessFactors only if it earns it.
 4. **The portal.** Static page + `jarvis` launcher. Two real panels.
 5. Use it every morning for a week. Fix what's annoying.
 6. LinkedIn Content Agent (draft-only), fed by that week's briefs.

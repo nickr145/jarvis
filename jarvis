@@ -1,18 +1,24 @@
 #!/usr/bin/env python3
 """
-jarvis — open the portal.
+jarvis — refresh what can be refreshed, then open the portal.
 
-    ./jarvis                 refresh news, then open the portal
-    ./jarvis --no-refresh    open whatever is already on disk
-    ./jarvis --port 8931     use a specific port
+    jarvis                  refresh news, rebuild listings, open the portal
+    jarvis --poll           also poll employer job boards (~70s)
+    jarvis --no-refresh     open whatever is already on disk
+    jarvis --port 8931      use a specific port
+    jarvis --install        symlink this into ~/.local/bin so it runs anywhere
 
 Serves the repo root so the page can read output/ alongside portal/.
-The email agent is not run here — it needs the Gmail MCP, so it runs as a
-Claude Code subagent and leaves email.json behind for this to pick up.
+
+**Email is not refreshed here, and cannot be.** The Gmail connector lives in a
+Claude Code session, so a plain terminal cannot reach it. This picks up whatever
+email.json the last Claude Code run left behind, and the portal reports that
+file's age rather than presenting stale triage as current.
 """
 
 import argparse
 import functools
+import os
 import http.server
 import json
 import socketserver
@@ -45,29 +51,65 @@ def write_index() -> str | None:
     return latest
 
 
-def refresh_news() -> None:
-    script = ROOT / "agents" / "news_agent.py"
-    if not script.exists():
+def run_step(name: str, script: str, timeout: int) -> None:
+    """Run one agent. A failure here is reported and skipped, never fatal —
+    a partial brief beats no brief, and the portal renders a missing source
+    as missing."""
+    path = ROOT / "agents" / script
+    if not path.exists():
+        print(f"  {name}: {script} not found — skipped")
         return
     try:
-        r = subprocess.run([sys.executable, str(script)], capture_output=True,
-                           text=True, timeout=60)
-        print((r.stdout or r.stderr).strip() or "news_agent: no output")
+        r = subprocess.run([sys.executable, str(path)], capture_output=True,
+                           text=True, timeout=timeout)
+        out = (r.stdout or r.stderr).strip().splitlines()
+        print(f"  {name}: {out[-1] if out else 'no output'}")
     except subprocess.TimeoutExpired:
-        print("news_agent: timed out — opening with whatever is on disk")
+        print(f"  {name}: timed out — continuing with what is on disk")
     except OSError as e:
-        print(f"news_agent: could not run ({e}) — opening existing output")
+        print(f"  {name}: could not run ({e}) — continuing")
+
+
+def install() -> None:
+    """Symlink into ~/.local/bin so `jarvis` works from any directory."""
+    target = Path.home() / ".local" / "bin"
+    target.mkdir(parents=True, exist_ok=True)
+    link = target / "jarvis"
+    src = Path(__file__).resolve()
+    if link.is_symlink() or link.exists():
+        link.unlink()
+    link.symlink_to(src)
+    print(f"linked {link} -> {src}")
+    if str(target) not in os.environ.get("PATH", "").split(":"):
+        print(f"\n{target} is not on your PATH. Add this to ~/.zshrc:\n"
+              f'  export PATH="$HOME/.local/bin:$PATH"')
+    else:
+        print("`jarvis` now works from anywhere.")
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(add_help=True)
     ap.add_argument("--no-refresh", action="store_true",
-                    help="skip the news agent, just open what exists")
+                    help="skip all agents, just open what exists")
+    ap.add_argument("--poll", action="store_true",
+                    help="also poll employer job boards (~70s)")
+    ap.add_argument("--install", action="store_true",
+                    help="symlink into ~/.local/bin and exit")
     ap.add_argument("--port", type=int, default=8731)
     args = ap.parse_args()
 
+    if args.install:
+        install()
+        return
+
     if not args.no_refresh:
-        refresh_news()
+        print("refreshing:")
+        run_step("news", "news_agent.py", 60)
+        # The board poll is ~70s, so it is opt-in; the portal is otherwise up
+        # in about two seconds.
+        if args.poll:
+            run_step("boards", "ats_poll.py", 300)
+        run_step("listings", "build_listings.py", 60)
 
     latest = write_index()
     if latest is None:

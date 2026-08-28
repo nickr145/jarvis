@@ -45,7 +45,11 @@ body{
   text-align:right;line-height:1.7}
 .mast-meta b{color:var(--ink-dim);font-weight:400}
 .rule{height:1px;background:linear-gradient(90deg,var(--accent) 0 88px,var(--line) 88px);
-  margin-bottom:var(--s6)}
+  margin-bottom:var(--s5)}
+.stale{border:1px solid color-mix(in oklch,var(--alert) 40%,transparent);
+  padding:var(--s3) var(--s4);margin-bottom:var(--s5);font-size:.8125rem;
+  color:var(--alert);line-height:1.6}
+.stale code{font-family:var(--mono);font-size:.75rem;color:var(--ink-dim)}
 
 /* ---------- readout strip ---------- */
 .readout{border:1px solid var(--line);background:var(--surface);
@@ -138,6 +142,8 @@ a.row:focus-visible{box-shadow:inset 2px 0 0 var(--accent)}
   </header>
   <div class="rule"></div>
 
+  <div id="stale" hidden></div>
+
   <section class="readout" aria-label="Summary">
     <dl class="readout-row" id="readout"></dl>
     <div class="readout-sub" id="breakdown" hidden></div>
@@ -184,6 +190,17 @@ const $ = s => document.querySelector(s);
 const el = (t, c, x) => { const n = document.createElement(t);
   if (c) n.className = c; if (x != null) n.textContent = x; return n; };
 const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* Days since a file was generated. Freshness has to be visible: an empty
+   "Needs you" panel means "nothing arrived" only if the file is current. If it
+   is three days old it means "nobody has looked since Tuesday", and those must
+   not render identically. */
+const ageOfDays = iso => { if (!iso) return null;
+  const t = new Date(iso); if (isNaN(t)) return null;
+  return (Date.now() - t.getTime()) / 86400000; };
+
+const fmtAge = d => d == null ? 'unknown age'
+  : d < 1 ? 'today' : d < 2 ? 'yesterday' : `${Math.floor(d)} days old`;
 
 const fmtTime = iso => { if (!iso) return '';
   const d = new Date(iso); if (isNaN(d)) return iso;
@@ -238,8 +255,11 @@ function listingRow(x){
   top.append(el('span','row-title', x.title || '(no title)'));
   if (x.salary) top.append(el('span','tag', x.salary));
   a.append(top);
+  const src = (x.source || '').split(':')[0];
+  const also = (x.also_on || []).length ? `+${x.also_on.join(',')}` : '';
   a.append(el('div','row-sub',
-    [x.company, x.location, x.source].filter(Boolean).join(' · ')));
+    [x.company, x.location, [src, also].filter(Boolean).join(' ')]
+      .filter(Boolean).join(' · ')));
   return a;
 }
 
@@ -416,16 +436,38 @@ function breakdown(jobItems){
          detail:'Not the same as a missing file — every feed came back empty.'}
       : {lead:'No news file for this date.', detail:'Run agents/news_agent.py.'}});
 
+  /* Email cannot be refreshed by the launcher — the Gmail connector lives in a
+     Claude Code session — so its age is the one most likely to drift. */
+  const mailAge = mail ? ageOfDays(mail.generated_at) : null;
+  const newsAge = news ? ageOfDays(news.generated_at) : null;
+  const minedAge = mined ? ageOfDays(mined.generated_at) : null;
+
+  const stale = [];
+  if (mail && mailAge != null && mailAge >= 1)
+    stale.push(`Email triage is ${fmtAge(mailAge)}. An empty "Needs you" means nothing arrived as of then — not that nothing arrived today. Re-run the email agent in Claude Code to refresh it.`);
+  if (news && newsAge != null && newsAge >= 1)
+    stale.push(`News is ${fmtAge(newsAge)}. Run ./jarvis to refresh.`);
+  if (mined && minedAge != null && minedAge >= 2)
+    stale.push(`Job listings are ${fmtAge(minedAge)}. Run ./jarvis --poll to refresh.`);
+  if (stale.length){
+    const box = $('#stale'); box.hidden = false; box.className = 'stale';
+    stale.forEach(t => box.append(el('div', null, t)));
+  }
+
   const bits = [];
-  if (mail){ bits.push(`email.json · ${items.length} threads · window from ${mail.window_start||'?'}`);
+  if (mail){ bits.push(`email.json · ${items.length} threads · ${fmtAge(mailAge)} · window from ${mail.window_start||'?'}`);
     if (mail.coverage) bits.push(mail.coverage);
     if (mail.method) bits.push(mail.method); }
   else bits.push(`email.json unavailable — ${mailErr}`);
-  if (news) bits.push(`news.json · generated ${fmtTime(news.generated_at)}`);
+  if (news) bits.push(`news.json · ${fmtAge(newsAge)} · generated ${fmtTime(news.generated_at)}`);
   else bits.push(`news.json unavailable — ${newsErr}`);
   if (mined){
     bits.push(`listings.json · ${(mined.listings||[]).length} listings · ${mined.coverage||''}`);
     if (mined.caveat) bits.push(mined.caveat);
+    if (mined.collapsed_duplicates != null)
+      bits.push(`${mined.collapsed_duplicates} duplicate(s) collapsed across sources`);
+    if ((mined.sources_missing||[]).length)
+      bits.push(`source not present this run: ${mined.sources_missing.join(', ')}`);
     if ((mined.sources_without_parser||[]).length)
       bits.push(`no parser (counted, not guessed): ${mined.sources_without_parser.join(', ')}`);
   } else bits.push(`listings.json unavailable — ${minedErr}`);
