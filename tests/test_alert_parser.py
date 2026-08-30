@@ -274,6 +274,127 @@ class IndeedRawTests(unittest.TestCase):
         self.assertEqual(len(r["listings"]), 1)
 
 
+class Jobs2WebTests(unittest.TestCase):
+    """jobs2web (SAP SuccessFactors) renders through at least two templates
+    depending on the employer: Capgemini/TELUS give each listing a real
+    markdown link; Scotiabank/Rogers wrap an empty link after plain text,
+    with every listing packed into one paragraph with no line breaks."""
+
+    def scotiabank(self):
+        from agents.alert_parser import parse_report
+        return parse_report((FIXTURES / "jobs2web_scotiabank_digest.txt").read_text(),
+                            "scotiabank-jobnotification@noreply17.jobs2web.com")
+
+    def capgemini(self):
+        from agents.alert_parser import parse_report
+        return parse_report((FIXTURES / "jobs2web_capgemini_digest.txt").read_text(),
+                            "capgemitecp3-jobnotification@noreply12.jobs2web.com")
+
+    def telus(self):
+        from agents.alert_parser import parse_report
+        return parse_report((FIXTURES / "jobs2web_telus_digest.txt").read_text(),
+                            "TELUS_job_alerts@noreply17.jobs2web.com")
+
+    def rogers(self):
+        from agents.alert_parser import parse_report
+        return parse_report((FIXTURES / "jobs2web_rogers_digest.txt").read_text(),
+                            "rogers-jobnotification@noreply.jobs2web.com")
+
+    def test_reads_every_listing_in_each_template(self):
+        self.assertEqual(len(self.scotiabank()["listings"]), 10)
+        self.assertEqual(len(self.capgemini()["listings"]), 10)
+        self.assertEqual(len(self.telus()["listings"]), 10)
+        self.assertEqual(len(self.rogers()["listings"]), 10)
+
+    def test_intro_chrome_does_not_leak_into_the_first_title(self):
+        # Real bug: Scotiabank's blob has no link between the greeting and
+        # the first listing, so a naive split left ". Jobs" glued to the
+        # title; Rogers has the same problem via a bare colon instead.
+        first_scotia = self.scotiabank()["listings"][0]
+        self.assertEqual(first_scotia["title"],
+                         "Technical Analyst Advisory (Capital Markets Technology)")
+        first_rogers = self.rogers()["listings"][0]
+        self.assertEqual(first_rogers["title"], "Sr Mgr, Fraud Strategy")
+
+    def test_titles_with_their_own_dashes_still_split_correctly(self):
+        row = next(x for x in self.scotiabank()["listings"]
+                   if x["job_id"] == "605642017")
+        self.assertEqual(row["title"], "Senior Payroll Analyst (12-month contract)")
+        self.assertEqual(row["location"], "Scarborough, ON, CA, M1L4S2")
+
+    def test_location_without_a_province_code_is_still_recognized(self):
+        # Capgemini's template omits the province entirely ("Mississauga, CA").
+        row = self.capgemini()["listings"][0]
+        self.assertEqual(row["location"], "Mississauga, CA")
+
+    def test_company_comes_from_the_sender_not_the_body(self):
+        for row in self.telus()["listings"]:
+            self.assertEqual(row["company"], "TELUS")
+        for row in self.rogers()["listings"]:
+            self.assertEqual(row["company"], "Rogers Communications")
+
+    def test_job_id_is_the_trailing_digits_in_the_job_url(self):
+        row = self.capgemini()["listings"][0]
+        self.assertEqual(row["job_id"], "1429357433")
+
+    def test_unknown_tenant_is_counted_not_guessed(self):
+        from agents.alert_parser import parse_report
+        body = "[Some Role - Waterloo, ON, CA](http://jobs.example.com/job/x/12345/)"
+        r = parse_report(body, "somebank-jobnotification@noreply.jobs2web.com")
+        self.assertEqual(r["listings"], [])
+        self.assertEqual(r["unreadable"], 1)
+
+    def test_a_tracking_query_string_after_the_id_does_not_hide_the_listing(self):
+        # Real bug: production links carry "?from=email&refid=..." after the
+        # job id; the fixtures used to build this were trimmed of exactly
+        # that tail, so an end-anchored id regex passed every test while
+        # matching zero real listings.
+        from agents.alert_parser import parse_report
+        body = ("[Data Analyst - Waterloo, ON, CA]"
+                "(http://jobs.scotiabank.com/job/Waterloo-Data-Analyst-ON/605642099/"
+                "?from=email&amp;refid=abc123&amp;eid=9)")
+        r = parse_report(body, "scotiabank-jobnotification@noreply17.jobs2web.com")
+        self.assertEqual(len(r["listings"]), 1)
+        self.assertEqual(r["listings"][0]["job_id"], "605642099")
+
+
+class JobrightTests(unittest.TestCase):
+    """Jobright's PLAIN_TEXT body drops all listing content — it only
+    survives in the HTML, keyed by element id rather than layout."""
+
+    def jobright(self):
+        from agents.alert_parser import parse_jobright_report
+        return parse_jobright_report(
+            (FIXTURES / "jobright_digest.html").read_text(), "2026-08-29")
+
+    def test_reads_every_card_in_the_fixture(self):
+        self.assertEqual(len(self.jobright()["listings"]), 10)
+
+    def test_fields_come_from_their_own_tagged_elements_not_layout(self):
+        row = next(x for x in self.jobright()["listings"]
+                   if x["job_id"] == "69e8fc294b0fa35a7076a8f6")
+        self.assertEqual(row["title"], "Software Engineer II, Backend (PMI Integrations)")
+        self.assertEqual(row["company"], "Affirm")
+        self.assertEqual(row["location"], "Remote")
+        self.assertEqual(row["salary"], "$125K/yr - $175K/yr")
+        self.assertEqual(row["posted"], "3 hours ago")
+
+    def test_a_referral_count_tag_is_not_mistaken_for_location_or_salary(self):
+        row = next(x for x in self.jobright()["listings"]
+                   if x["job_id"] == "6a7f4a35b56bea5779c09e86")
+        self.assertEqual(row["location"], "Toronto, ON")
+        self.assertIsNone(row["salary"])
+
+    def test_a_card_missing_from_its_own_wrapper_table_does_not_leak_fields(self):
+        # The card-boundary regex must not let one listing's table swallow
+        # the next listing's fields when scanning for id="job-section".
+        rows = self.jobright()["listings"]
+        titles = {r["job_id"]: r["title"] for r in rows}
+        self.assertEqual(titles["6a91fd053603630099195786"],
+                         "Associate Product Support Specialist")
+        self.assertEqual(titles["6a594ef24da96a42cfd907d4"], "Sales Associate")
+
+
 class RecencyTests(unittest.TestCase):
     def test_indeed_age_line_is_captured(self):
         from agents.alert_parser import parse

@@ -82,6 +82,35 @@ the answer is to report it, not to perform it.
      those as PLAIN_TEXT and counting them as unreadable when they yield
      nothing, same as today.
 
+   **`jobs2web.com` senders (Scotiabank, Capgemini, TELUS, Rogers, and any
+   new employer using the same platform) use ordinary PLAIN_TEXT** — no
+   exception needed — and are already dispatched by `parse_report` via the
+   same call shown above. `agents.alert_parser.parse_jobs2web` handles both
+   known template variants (a real markdown link per listing, or an empty
+   link glued to plain title/location text with no line breaks at all) and
+   derives the employer name from `sender`, not the body — a jobs2web sender
+   whose local-part isn't in `_JOBS2WEB_COMPANY` yet is counted as
+   unreadable rather than guessed. Add it there (with a real fixture) before
+   expecting listings from a new tenant.
+
+   **Exception — `jobright.ai` messages need HTML, not PLAIN_TEXT.**
+   Jobright's plaintext body drops title/company/location entirely — that
+   content only exists in the HTML, tagged by element id
+   (`job-company-name`, `job-title`, `job-tag`, `job-time-posted`), not by
+   position. Call `get_message` with `messageFormat: FULL_CONTENT` and use
+   its `html_body` field (write it to a file the same way — verbatim, no
+   condensing), then call
+   `agents.alert_parser.parse_jobright_report(html_body, received)`:
+
+   ```bash
+   python3 -c "
+   import json,sys; sys.path.insert(0,'.')
+   from agents.alert_parser import parse_jobright_report
+   html=open(sys.argv[1]).read()
+   print(json.dumps(parse_jobright_report(html, sys.argv[2])))
+   " /tmp/html_body.txt "<received-date>"
+   ```
+
    If a body is too large to handle comfortably, say so and skip that message
    as unreadable. A counted gap is honest; a retyped body is not. Then `dedupe` on `job_id`
    and `rank` with `job_keywords` from `config/profile.json`.
@@ -92,8 +121,8 @@ the answer is to report it, not to perform it.
 
 The counts, the window used, and — non-negotiably — **what you did not cover**.
 How many alert emails you parsed out of how many exist, how many listings were
-unreadable, which sources have no parser (Haystack and Jobright currently do
-not; they are counted, never guessed at).
+unreadable, which sources have no parser (Haystack currently does not; it is
+counted, never guessed at).
 
 A partial run reported as complete is the one failure this project cannot
 tolerate. Listings all look real whether or not the harvest was.

@@ -17,6 +17,7 @@ a company or a job id produces no listing at all.
 
 import base64
 import email
+import html
 import quopri
 import re
 from typing import Iterable
@@ -75,7 +76,8 @@ def _looks_like_badge(line: str) -> bool:
 
 
 def parse_linkedin(body: str, received: str | None = None,
-                   unreadable: list | None = None) -> list[dict]:
+                   unreadable: list | None = None,
+                   sender: str | None = None) -> list[dict]:
     listings: list[dict] = []
     unreadable = unreadable if unreadable is not None else []
     for block in _RULE.split(body):
@@ -189,7 +191,8 @@ def extract_indeed_raw(raw_message: str) -> tuple[str, list[str]]:
 
 def parse_indeed(body: str, received: str | None = None,
                  unreadable: list | None = None,
-                 raw_job_ids: list[str] | None = None) -> list[dict]:
+                 raw_job_ids: list[str] | None = None,
+                 sender: str | None = None) -> list[dict]:
     """Indeed lays a listing out as title / "Company - Location" / optional
     salary / description / age / link, with blank lines between listings and
     no separator rules.
@@ -258,9 +261,106 @@ def parse_indeed(body: str, received: str | None = None,
     return listings
 
 
+# ------------------------------------------------------------- jobs2web ---
+
+# jobs2web (SAP SuccessFactors' job-alert product) renders through at least
+# two mail templates depending on the employer: some wrap each listing's own
+# "Title - Location" text inside the link itself, others put that text as
+# plain content immediately before an empty anchor, with every listing
+# packed into one paragraph with no line breaks at all. Neither template
+# names the employer per listing — only the sender does — so this parser
+# needs `sender` where LinkedIn's and Indeed's don't.
+_JOBS2WEB_LINK = re.compile(r"\[([^\]]*)\]\((https?://[^)\s]+)\)")
+# Not end-anchored: production links carry a tracking query string after the
+# id ("...?/605642017/?from=email&refid=..."); the trimmed fixtures used to
+# build this against didn't, which is exactly how the end-anchored version
+# of this regex passed every test while matching zero real listings.
+_JOBS2WEB_JOB_URL = re.compile(r"/job/[^)\s?]*?/(\d+)(?:[/?]|$)")
+_CA_PROVINCES = "ON|BC|AB|QC|MB|SK|NS|NB|NL|PE|YT|NT|NU"
+_JOBS2WEB_LOCATION = re.compile(
+    rf"-\s*([^-\n]+?,\s*(?:(?:{_CA_PROVINCES}),\s*)?CA(?:,\s*[A-Z]\d[A-Z]\s?\d[A-Z]\d)?)\s*$"
+)
+# Sender local-parts seen so far, mapped to a display name. A tenant not
+# listed here yields no listings, not a guessed company name.
+_JOBS2WEB_COMPANY = {
+    "scotiabank": "Scotiabank",
+    "capgemitecp3": "Capgemini",
+    "telus": "TELUS",
+    "rogers": "Rogers Communications",
+}
+
+
+def _jobs2web_company(sender: str | None) -> str | None:
+    s = (sender or "").lower()
+    return next((name for key, name in _JOBS2WEB_COMPANY.items() if key in s), None)
+
+
+def _jobs2web_split(text: str) -> tuple[str, str] | None:
+    """Split "…Title - City, Province, CA[, Postal]" into (title, location).
+
+    Titles routinely contain their own dashes ("Senior Payroll Analyst
+    (12-month contract) - Scarborough, ON, CA"), so the split point is found
+    by anchoring on a trailing Canadian-province pattern instead of on the
+    last "-" in the string.
+    """
+    m = _JOBS2WEB_LOCATION.search(text)
+    if not m:
+        return None
+    title = text[:m.start()].rstrip(" -")
+    # A colon marks the end of the digest's own intro sentence when that
+    # tenant's template has nothing to hyperlink between the greeting and
+    # the first job, leaving it stuck to the title text ahead of this link.
+    if ":" in title:
+        title = title.rsplit(":", 1)[-1].strip()
+    # Some templates put a bare "Jobs" section header ahead of the first
+    # listing with nothing to hyperlink either — same problem, different
+    # punctuation ("...at jobs.scotiabank.com[](url). Jobs Technical...").
+    title = re.sub(r"^\.?\s*jobs\s+(?=[A-Z])", "", title, flags=re.I).strip()
+    location = m.group(1).strip()
+    return (title, location) if title else None
+
+
+def parse_jobs2web(body: str, received: str | None = None,
+                   unreadable: list | None = None,
+                   sender: str | None = None) -> list[dict]:
+    listings: list[dict] = []
+    unreadable = unreadable if unreadable is not None else []
+    company = _jobs2web_company(sender)
+
+    prev_end = 0
+    for m in _JOBS2WEB_LINK.finditer(body):
+        link_text, url = m.group(1).strip(), m.group(2)
+        preceding = body[prev_end:m.start()]
+        prev_end = m.end()
+
+        job_m = _JOBS2WEB_JOB_URL.search(url)
+        if not job_m:
+            continue  # footer, social, "manage preferences" — not a listing
+
+        split = _jobs2web_split(link_text or preceding)
+        if not split or not company:
+            unreadable.append(url[:60])
+            continue
+
+        title, location = split
+        listings.append({
+            "title": title,
+            "company": company,
+            "location": location,
+            "url": url,
+            "job_id": job_m.group(1),
+            "source": "jobs2web",
+            "salary": None,
+            "posted": None,
+            "first_seen": received,
+        })
+    return listings
+
+
 _PARSERS = {
     "linkedin.com": parse_linkedin,
     "indeed.com": parse_indeed,
+    "jobs2web.com": parse_jobs2web,
 }
 
 
@@ -279,7 +379,7 @@ def parse_report(body: str, sender: str, received: str | None = None) -> dict:
     for domain, fn in _PARSERS.items():
         if domain in (sender or "").lower():
             unreadable: list[str] = []
-            got = fn(body, received, unreadable)
+            got = fn(body, received, unreadable, sender=sender)
             return {"listings": got, "unreadable": len(unreadable),
                     "source": domain.split(".")[0], "parser": True}
     return {"listings": [], "unreadable": 0, "source": sender, "parser": False}
@@ -298,6 +398,78 @@ def parse_indeed_raw_report(raw_message: str, received: str | None = None) -> di
     unreadable: list[str] = []
     got = parse_indeed(body, received, unreadable, raw_job_ids)
     return {"listings": got, "unreadable": len(unreadable), "source": "indeed", "parser": True}
+
+
+# ------------------------------------------------------------- Jobright ---
+
+# Jobright's PLAIN_TEXT body drops the title/company/location entirely —
+# they render from HTML elements the plaintext converter cannot see. The
+# HTML itself is a stable structure: each listing is one <a> card wrapping a
+# <table>, tagged with id="job-company-name" / "job-title" / "job-tag"
+# (0-3 of the last, holding salary and/or location and/or a referral count
+# with no fixed order) and one "N ago" line in id="job-time-posted".
+_JOBRIGHT_CARD = re.compile(
+    r'<a href="(https://jobright\.ai/jobs/info/[0-9a-f]+)[^"]*"[^>]*>\s*<table')
+_JOBRIGHT_TAG = re.compile(r'<(p|span)[^>]*\sid="([\w-]+)"[^>]*>(.*?)</\1>', re.S)
+_JOBRIGHT_SALARY = re.compile(r"\$[\d,]")
+_JOBRIGHT_LOCATION = re.compile(rf"^(remote|[^,]+,\s*(?:{_CA_PROVINCES}))$", re.I)
+
+
+def _jobright_text(fragment: str) -> str:
+    return html.unescape(re.sub(r"<[^>]+>", "", fragment)).strip()
+
+
+def parse_jobright(html_body: str, received: str | None = None,
+                   unreadable: list | None = None) -> list[dict]:
+    listings: list[dict] = []
+    unreadable = unreadable if unreadable is not None else []
+
+    starts = [m.start() for m in _JOBRIGHT_CARD.finditer(html_body)]
+    urls = [m.group(1) for m in _JOBRIGHT_CARD.finditer(html_body)]
+    bounds = starts + [len(html_body)]
+
+    for i, url in enumerate(urls):
+        block = html_body[bounds[i]:bounds[i + 1]]
+        fields: dict[str, list[str]] = {}
+        for m in _JOBRIGHT_TAG.finditer(block):
+            fields.setdefault(m.group(2), []).append(_jobright_text(m.group(3)))
+
+        company = fields.get("job-company-name", [None])[0]
+        title = fields.get("job-title", [None])[0]
+        if not company or not title:
+            unreadable.append(url[:60])
+            continue
+
+        salary = next((t for t in fields.get("job-tag", []) if _JOBRIGHT_SALARY.search(t)), None)
+        location = next((t for t in fields.get("job-tag", [])
+                          if _JOBRIGHT_LOCATION.match(t)), None)
+        # "N ago" sits ahead of a nested badge span picked up by the same
+        # tag; only the part before the separator is the actual age.
+        posted_raw = fields.get("job-time-posted", [None])[0]
+        posted = posted_raw.split("·")[0].strip() if posted_raw else None
+
+        listings.append({
+            "title": title,
+            "company": company,
+            "location": location,
+            "url": url,
+            "job_id": url.rsplit("/", 1)[-1],
+            "source": "jobright",
+            "salary": salary,
+            "posted": posted,
+            "first_seen": received,
+        })
+    return listings
+
+
+def parse_jobright_report(html_body: str, received: str | None = None) -> dict:
+    """Entry point for `jobright.ai` messages — needs `html_body`, not
+    PLAIN_TEXT, since the listing content only exists in the HTML.
+    Same shape as `parse_report`."""
+    unreadable: list[str] = []
+    got = parse_jobright(html_body, received, unreadable)
+    return {"listings": got, "unreadable": len(unreadable), "source": "jobright",
+            "parser": True}
 
 
 def dedupe(listings: Iterable[dict]) -> list[dict]:
@@ -337,10 +509,11 @@ def age_days(listing: dict, today: str | None = None) -> float | None:
             return 0.0
         if posted.startswith("yesterday"):
             return 1.0
-        m = re.match(r"(\d+)\+? *(hour|day|week|month)", posted)
+        m = re.match(r"(\d+)\+? *(minute|hour|day|week|month)", posted)
         if m:
             n, unit = int(m.group(1)), m.group(2)
-            return n * {"hour": 1 / 24, "day": 1, "week": 7, "month": 30}[unit]
+            return n * {"minute": 1 / 1440, "hour": 1 / 24, "day": 1,
+                        "week": 7, "month": 30}[unit]
     seen, ref = listing.get("first_seen"), today
     if seen and ref:
         try:
