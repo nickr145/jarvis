@@ -4,6 +4,7 @@ Fixtures are real message bodies, trimmed only of tracking-parameter tails.
 The parser must never invent a field: a listing it cannot read is a listing
 it must skip, not one it guesses at.
 """
+import base64
 import pathlib
 import sys
 import unittest
@@ -159,6 +160,118 @@ class IndeedTests(unittest.TestCase):
         titles = [x["title"] for x in self.indeed()["listings"]]
         for junk in ("Indeed Job Alert", "Do not share this email", "Jobs 1-16 of 16 new jobs"):
             self.assertNotIn(junk, titles)
+
+    def test_a_correctly_escaped_key_is_not_reversed(self):
+        # Real 2026-08-30 digests: Indeed's template escaped the "=" properly
+        # this time, so the decoded body already carries the true 16-hex key
+        # after a literal "=". Applying the mangled-byte reversal here would
+        # prepend a fake "3d" and drop the real trailing two digits — exactly
+        # the corruption a subagent caught before it reached listings_email.json.
+        from agents.alert_parser import parse_indeed
+        body = ("Software Engineer @ Autodesk\r\n"
+                "Autodesk - Toronto, ON\r\n"
+                "Just posted\r\n"
+                "https://ca.indeed.com/rc/clk/dl?jk=7e7c5ff656671269&from=ja\r\n")
+        rows = parse_indeed(body, "2026-08-30")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["job_id"], "7e7c5ff656671269")
+
+    def test_a_mangled_key_starting_with_hex_3d_still_reverses_correctly(self):
+        # ord('=') is 0x3d, so a genuinely mangled marker byte can itself
+        # decode to a literal "=" — indistinguishable from the clean case by
+        # character alone. True key "3d84c15b2a9165af": the encoder's bug
+        # drops "3d" into the decoder's escape, leaving "=" plus only the
+        # other 14 hex digits, which is what disambiguates it from a clean
+        # (16-digit) match.
+        from agents.alert_parser import parse_indeed
+        body = ("Data Analyst Intern\r\n"
+                "Shopify - Ottawa, ON\r\n"
+                "Just posted\r\n"
+                "https://ca.indeed.com/rc/clk/dl?jk=84c15b2a9165af&from=ja\r\n")
+        rows = parse_indeed(body, "2026-08-30")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["job_id"], "3d84c15b2a9165af")
+
+
+def _raw_indeed_message(body_text: str) -> str:
+    """Build a base64url RFC 2822 message the way Gmail's RAW format would,
+    with `body_text` inserted as an already quoted-printable-*encoded*
+    payload — i.e. the caller controls exactly what stays undecoded, which is
+    the point: real Indeed digests leave `jk=<hex>` unescaped, and the test
+    fixtures below reproduce that literally rather than via `quopri.encode`,
+    which would (correctly) escape the `=` and never trigger the bug."""
+    msg = ("From: donotreply@jobalert.indeed.com\r\n"
+           "To: user@example.com\r\n"
+           "Subject: Test\r\n"
+           "Content-Type: text/plain; charset=utf-8\r\n"
+           "Content-Transfer-Encoding: quoted-printable\r\n"
+           "\r\n" + body_text)
+    return base64.urlsafe_b64encode(msg.encode("ascii")).decode("ascii")
+
+
+class IndeedRawTests(unittest.TestCase):
+    """The job key mangled by quoted-printable decoding (IndeedTests, above)
+    can only be reversed because a byte survived intact from Gmail's tool
+    output into a Python string. A byte that is an invalid lone surrogate or
+    an unprintable control character does not reliably survive that trip
+    through a text-generation interface — so the real fix fetches the
+    message before decoding runs at all, when the job key is still literal
+    ASCII. These tests exercise that path directly, independent of Gmail."""
+
+    def test_job_id_recovered_from_undecoded_source(self):
+        from agents.alert_parser import extract_indeed_raw
+
+        body = ("2027 Winter - ECCO, Data Intern (4 Months)\r\n"
+                "Royal Bank of Canada - Toronto, ON\r\n"
+                "Just posted\r\n"
+                "https://ca.indeed.com/rc/clk/dl?jk=10762b9150fc2b52&from=ja\r\n")
+        decoded, job_ids = extract_indeed_raw(_raw_indeed_message(body))
+        self.assertEqual(job_ids, ["10762b9150fc2b52"])
+        self.assertIn("2027 Winter - ECCO, Data Intern (4 Months)", decoded)
+
+    def test_soft_line_break_across_the_job_key_is_unwrapped_first(self):
+        from agents.alert_parser import extract_indeed_raw
+        # A real 76-column QP wrap could land the trailing soft break inside
+        # the hex run; unwrapping must happen before the key is read out.
+        body = ("Title\r\nCompany - City\r\nJust posted\r\n"
+                "https://ca.indeed.com/rc/clk/dl?jk=1076=\r\n2b9150fc2b52&from=ja\r\n")
+        _, job_ids = extract_indeed_raw(_raw_indeed_message(body))
+        self.assertEqual(job_ids, ["10762b9150fc2b52"])
+
+    def test_end_to_end_produces_the_same_listing_as_the_byte_reversal_path(self):
+        from agents.alert_parser import extract_indeed_raw, parse_indeed
+        body = ("2027 Winter - ECCO, Data Intern (4 Months)\r\n"
+                "Royal Bank of Canada - Toronto, ON\r\n"
+                "Just posted\r\n"
+                "https://ca.indeed.com/rc/clk/dl?jk=10762b9150fc2b52&from=ja\r\n")
+        decoded, job_ids = extract_indeed_raw(_raw_indeed_message(body))
+        rows = parse_indeed(decoded, "2026-08-30", raw_job_ids=job_ids)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["job_id"], "10762b9150fc2b52")
+        self.assertEqual(rows[0]["url"], "https://ca.indeed.com/viewjob?jk=10762b9150fc2b52")
+
+    def test_no_text_plain_part_yields_nothing_not_a_crash(self):
+        from agents.alert_parser import extract_indeed_raw
+        msg = ("From: a@b.com\r\nTo: c@d.com\r\nSubject: x\r\n"
+               "Content-Type: text/html\r\n\r\n<p>hi</p>")
+        raw = base64.urlsafe_b64encode(msg.encode("ascii")).decode("ascii")
+        decoded, job_ids = extract_indeed_raw(raw)
+        self.assertEqual((decoded, job_ids), ("", []))
+
+    def test_garbage_input_yields_nothing_not_a_crash(self):
+        from agents.alert_parser import extract_indeed_raw
+        self.assertEqual(extract_indeed_raw("not valid base64!!!"), ("", []))
+
+    def test_report_wrapper_matches_parse_report_shape(self):
+        from agents.alert_parser import parse_indeed_raw_report
+        body = ("2027 Winter - ECCO, Data Intern (4 Months)\r\n"
+                "Royal Bank of Canada - Toronto, ON\r\n"
+                "Just posted\r\n"
+                "https://ca.indeed.com/rc/clk/dl?jk=10762b9150fc2b52&from=ja\r\n")
+        r = parse_indeed_raw_report(_raw_indeed_message(body), "2026-08-30")
+        self.assertTrue(r["parser"])
+        self.assertEqual(r["source"], "indeed")
+        self.assertEqual(len(r["listings"]), 1)
 
 
 class RecencyTests(unittest.TestCase):

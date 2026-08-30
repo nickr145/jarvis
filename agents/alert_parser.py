@@ -15,6 +15,9 @@ is lifted verbatim from the body; nothing is inferred. A block missing a title,
 a company or a job id produces no listing at all.
 """
 
+import base64
+import email
+import quopri
 import re
 from typing import Iterable
 
@@ -108,7 +111,14 @@ def parse_linkedin(body: str, received: str | None = None,
 
 # ---------------------------------------------------------------- Indeed ---
 
-_INDEED_JK = re.compile(r"indeed\.com/rc/clk/dl\?jk(.)([0-9a-f]{14})")
+# A properly-escaped digest decodes to a literal "=" plus the full 16-hex
+# key; only when that clean form isn't present is the body actually mangled
+# (see `_indeed_job_id`). Tried in this order — CLEAN first — because a
+# mangled key that happens to start with hex "3d" decodes its marker byte to
+# a literal "=" too, and is distinguished only by having 14 trailing hex
+# characters where a clean key has 16.
+_INDEED_JK_CLEAN = re.compile(r"indeed\.com/rc/clk/dl\?jk=([0-9a-fA-F]{16})(?![0-9a-fA-F])")
+_INDEED_JK = re.compile(r"indeed\.com/rc/clk/dl\?jk(.)([0-9a-f]{14})(?![0-9a-fA-F])")
 _INDEED_AGE = re.compile(r"^(just posted|active \d|\d+\+? (minute|hour|day|week|month)s? ago)$", re.I)
 _INDEED_SALARY = re.compile(r"^(from |up to )?[$€£]|a (year|month|week|hour)$", re.I)
 _INDEED_CHROME = re.compile(
@@ -134,13 +144,63 @@ def _indeed_job_id(marker: str, rest: str) -> str | None:
     return jid if re.fullmatch(r"[0-9a-f]{16}", jid) else None
 
 
+_QP_SOFT_BREAK = re.compile(r"=\r?\n")
+_INDEED_JK_LITERAL = re.compile(r"indeed\.com/rc/clk/dl\?jk=([0-9a-fA-F]{16})")
+
+
+def extract_indeed_raw(raw_message: str) -> tuple[str, list[str]]:
+    """Recover an Indeed digest's real job keys from the message's raw MIME
+    source, and return the decoded body alongside them.
+
+    `_indeed_job_id` above reverses a mangled byte, but that byte can be an
+    unprintable control character or an invalid lone surrogate half — arriving
+    through a text interface, that byte has already been lost or altered
+    before any code sees it, and reversing garbage recovers garbage. The
+    corruption happens because Indeed's template never escapes the literal
+    `=` in `jk=<16 hex>`, so a standards-compliant quoted-printable decoder
+    mistakes the first two hex digits for an escape sequence. The fix is not
+    a smarter decode: it is to read those digits *before* decoding runs, from
+    the still-encoded source, where they are always plain ASCII.
+
+    `raw_message` is the base64url blob Gmail's RAW message format returns —
+    an undecoded RFC 2822 message. Nothing here is guessed: a message with no
+    text/plain part, or a part that fails to decode, yields no job ids and an
+    empty body, exactly like any other unreadable input.
+    """
+    try:
+        raw_bytes = base64.urlsafe_b64decode(raw_message + "=" * (-len(raw_message) % 4))
+        msg = email.message_from_bytes(raw_bytes)
+    except (ValueError, TypeError):
+        return "", []
+
+    part = next((p for p in msg.walk() if p.get_content_type() == "text/plain"), None)
+    if part is None:
+        return "", []
+
+    encoded = part.get_payload(decode=False)
+    if not isinstance(encoded, str):
+        return "", []
+
+    unwrapped = _QP_SOFT_BREAK.sub("", encoded)
+    job_ids = _INDEED_JK_LITERAL.findall(unwrapped)
+    decoded = quopri.decodestring(unwrapped.encode("ascii", "replace")).decode("utf-8", "replace")
+    return decoded, job_ids
+
+
 def parse_indeed(body: str, received: str | None = None,
-                 unreadable: list | None = None) -> list[dict]:
+                 unreadable: list | None = None,
+                 raw_job_ids: list[str] | None = None) -> list[dict]:
     """Indeed lays a listing out as title / "Company - Location" / optional
     salary / description / age / link, with blank lines between listings and
-    no separator rules."""
+    no separator rules.
+
+    `raw_job_ids` — when supplied by `extract_indeed_raw`, one entry per
+    jk-bearing link in the order they appear — is used ahead of the
+    byte-reversal fallback, since it was never mangled to begin with.
+    """
     listings: list[dict] = []
     unreadable = unreadable if unreadable is not None else []
+    raw_job_ids = list(raw_job_ids) if raw_job_ids else []
 
     for block in re.split(r"\n\s*\n", body):
         lines = [ln.strip() for ln in block.splitlines() if ln.strip()]
@@ -151,18 +211,23 @@ def parse_indeed(body: str, received: str | None = None,
         if not link:
             continue
 
-        m = _INDEED_JK.search(link)
-        if not m:
-            # /pagead/ sponsored slots carry no job key, so nothing can dedupe
-            # them. Counted, never invented.
-            if "/pagead/" in link:
+        clean = _INDEED_JK_CLEAN.search(link)
+        if clean:
+            # Already decoded correctly — reversing an unmangled key would
+            # corrupt it, not fix it.
+            job_id = clean.group(1).lower()
+        else:
+            m = _INDEED_JK.search(link)
+            if not m:
+                # /pagead/ sponsored slots carry no job key, so nothing can
+                # dedupe them. Counted, never invented.
+                if "/pagead/" in link:
+                    unreadable.append(link[:60])
+                continue
+            job_id = raw_job_ids.pop(0) if raw_job_ids else _indeed_job_id(m.group(1), m.group(2))
+            if not job_id:
                 unreadable.append(link[:60])
-            continue
-
-        job_id = _indeed_job_id(m.group(1), m.group(2))
-        if not job_id:
-            unreadable.append(link[:60])
-            continue
+                continue
 
         content = [ln for ln in lines
                    if not _INDEED_CHROME.match(ln) and not ln.startswith("http")]
@@ -218,6 +283,21 @@ def parse_report(body: str, sender: str, received: str | None = None) -> dict:
             return {"listings": got, "unreadable": len(unreadable),
                     "source": domain.split(".")[0], "parser": True}
     return {"listings": [], "unreadable": 0, "source": sender, "parser": False}
+
+
+def parse_indeed_raw_report(raw_message: str, received: str | None = None) -> dict:
+    """Entry point for `jobalert.indeed.com` messages fetched as RAW.
+
+    Same shape as `parse_report`, but starting from the base64url MIME blob
+    instead of a decoded plaintext body — see `extract_indeed_raw` for why
+    that ordering matters for this one source.
+    """
+    body, raw_job_ids = extract_indeed_raw(raw_message)
+    if not body:
+        return {"listings": [], "unreadable": 0, "source": "indeed", "parser": False}
+    unreadable: list[str] = []
+    got = parse_indeed(body, received, unreadable, raw_job_ids)
+    return {"listings": got, "unreadable": len(unreadable), "source": "indeed", "parser": True}
 
 
 def dedupe(listings: Iterable[dict]) -> list[dict]:

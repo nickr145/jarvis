@@ -52,6 +52,36 @@ the answer is to report it, not to perform it.
    already ignores them — stripping them by hand buys nothing and costs the
    guarantee that a listing came from the source.
 
+   **Exception — `jobalert.indeed.com` messages use RAW, not PLAIN_TEXT.**
+   Indeed's template leaves the `jk=<16 hex>` query parameter unescaped, so a
+   standards-compliant quoted-printable decode (which `PLAIN_TEXT` performs)
+   mangles the first two hex digits into one arbitrary byte — sometimes an
+   unprintable control character or an invalid lone-surrogate half that
+   cannot be reproduced faithfully through a text-generation interface.
+   Retyping that byte is not a verbatim-vs-condensed judgment call; it is not
+   reproducible at all, full stop. For these messages only:
+   - Call `get_message` with `messageFormat: RAW`. It returns a base64url
+     blob of the undecoded RFC 2822 source. Base64 is plain ASCII, so it can
+     be written to a file exactly as returned with no fidelity risk.
+   - Call `agents.alert_parser.parse_indeed_raw_report(raw_message, received)`
+     on it directly — it extracts the job keys before any decoding happens
+     and returns the same `{"listings", "unreadable", "source", "parser"}`
+     shape as `parse_report`:
+
+     ```bash
+     python3 -c "
+     import json,sys; sys.path.insert(0,'.')
+     from agents.alert_parser import parse_indeed_raw_report
+     raw=open(sys.argv[1]).read()
+     print(json.dumps(parse_indeed_raw_report(raw, sys.argv[2])))
+     " /tmp/raw_body.txt "<received-date>"
+     ```
+   - `match.indeed.com` is a separate, unsolved gap (its links go through a
+     `cts.indeed.com` redirect that carries no `jk=` at all — resolving it
+     would mean following a live redirect, not reading harder). Keep fetching
+     those as PLAIN_TEXT and counting them as unreadable when they yield
+     nothing, same as today.
+
    If a body is too large to handle comfortably, say so and skip that message
    as unreadable. A counted gap is honest; a retyped body is not. Then `dedupe` on `job_id`
    and `rank` with `job_keywords` from `config/profile.json`.
