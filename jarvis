@@ -131,7 +131,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self._json(200 if ok else 500, {"ok": ok, "message": msg})
 
     def log_message(self, fmt, *args):
-        if "/api/refresh/" in (args[0] if args else ""):
+        # send_error() logs (code, message) here instead of a request line,
+        # so args[0] isn't always a string — stringify before matching.
+        if args and "/api/refresh/" in str(args[0]):
             super().log_message(fmt, *args)
 
 
