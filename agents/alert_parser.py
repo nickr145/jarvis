@@ -33,9 +33,10 @@ _LINKEDIN_CHROME = re.compile(
 # `_looks_like_badge` is the second line of defence, and anything it catches is
 # reported as unreadable rather than emitted wrong.
 _LINKEDIN_BADGE = re.compile(
-    r"^(fast growing|top applicant|actively recruiting|be an early applicant"
+    r"^(fast growing|top applicant|actively recruiting"
+    r"|this company is actively (hiring|recruiting)|be an early applicant"
     r"|easy apply|promoted|viewed|response time|hiring in multiple locations"
-    r"|\d+ (company )?alumni|\d+ connections?|school alum|alum works here"
+    r"|\d+ (company |school )?alum(?:ni)?\b|\d+ connections?|school alum|alum works here"
     r"|\$[\d,]|CA\$[\d,])",
     re.I,
 )
